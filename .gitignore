@@ -1,0 +1,12 @@
+node_modules/
+.next/
+.env*
+!.env.example
+tmp/
+public/branding/store-logo.*
+!public/branding/store-logo.png
+public/branding/omega-brand-logo.png
+npm-debug.log*
+backend/stock/outputs/
+backend/**/__pycache__/
+*.pyc

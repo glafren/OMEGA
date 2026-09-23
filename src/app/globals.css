@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html { background: #f4f6fa; }
+body { margin: 0; background: #f4f6fa; color: #0f172a; font-family: Inter, "Segoe UI", Arial, Helvetica, sans-serif; }
+button, input, select { font: inherit; }
+::selection { background: #dbeafe; color: #1e3a8a; }
+@keyframes fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+.page-enter { animation: fade-up .35s ease-out both; }

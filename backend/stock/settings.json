@@ -1,0 +1,12 @@
+{
+  "in_stock_quantity": 10,
+  "critical_stock_quantity": 2,
+  "fast_stores": [
+    "IKEA Ümraniye",
+    "IKEA Kartal"
+  ],
+  "slow_stores": [
+    "IKEA Bayrampaşa",
+    "İnternet Mağazası"
+  ]
+}

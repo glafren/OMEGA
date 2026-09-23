@@ -1,0 +1,11 @@
+"use client";
+import * as Dialog from "@radix-ui/react-dialog";
+import Image from "next/image";
+import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
+import { Button } from "./ui/button";
+import type { OutputImage } from "@/types";
+
+export function ImagePreviewModal({ jobId, outputs, index, onIndex, onClose }: { jobId: string; outputs: OutputImage[]; index: number | null; onIndex: (index: number) => void; onClose: () => void }) {
+  const output = index === null ? null : outputs[index];
+  return <Dialog.Root open={Boolean(output)} onOpenChange={(open) => !open && onClose()}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm" /><Dialog.Content onKeyDown={(event) => { if (index === null) return; if (event.key === "ArrowLeft") onIndex((index - 1 + outputs.length) % outputs.length); if (event.key === "ArrowRight") onIndex((index + 1) % outputs.length); }} className="fixed left-1/2 top-1/2 z-50 w-[min(94vw,900px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-white p-4 shadow-2xl sm:p-6"><Dialog.Title className="pr-12 text-lg font-bold">{output?.filename}</Dialog.Title><Dialog.Description className="text-sm text-slate-500">750 × 1000 px</Dialog.Description><Dialog.Close className="absolute right-4 top-4 grid size-9 place-items-center rounded-lg text-slate-500 hover:bg-slate-100" aria-label="Önizlemeyi kapat"><X className="size-5" /></Dialog.Close>{output && <><div className="relative mx-auto mt-4 aspect-[3/4] max-h-[68vh] overflow-hidden rounded-xl bg-slate-100"><Image src={`/api/jobs/${jobId}/images/${output.id}`} alt={`${output.filename} büyük önizleme`} fill sizes="600px" className="object-contain" unoptimized /></div><div className="mt-4 flex items-center justify-between"><Button variant="secondary" size="sm" onClick={() => onIndex((index! - 1 + outputs.length) % outputs.length)} aria-label="Önceki görsel"><ChevronLeft className="size-4" />Önceki</Button><a href={`/api/jobs/${jobId}/download/${output.id}`}><Button size="sm"><Download className="size-4" />İndir</Button></a><Button variant="secondary" size="sm" onClick={() => onIndex((index! + 1) % outputs.length)} aria-label="Sonraki görsel">Sonraki<ChevronRight className="size-4" /></Button></div></>}</Dialog.Content></Dialog.Portal></Dialog.Root>;
+}
