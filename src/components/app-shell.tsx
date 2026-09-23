@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, Menu, PackageSearch, Settings, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
+import { QueueIndicator } from "@/components/queue-indicator";
 
 const navigation = [
   { href: "/media", label: "Medya Oluştur", description: "Görsel ve video", icon: ImageIcon },
@@ -44,7 +45,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <header className="sticky top-0 z-20 flex h-16 items-center border-b border-slate-200/80 bg-white/90 px-5 backdrop-blur-xl lg:px-8">
         <button className="mr-3 grid size-10 place-items-center rounded-xl border border-slate-200 lg:hidden" onClick={() => setOpen(true)} aria-label="Menüyü aç"><Menu className="size-5" /></button>
         <div><p className="text-xs font-semibold uppercase tracking-widest text-blue-700">OMEGA</p><p className="text-sm font-bold text-slate-800">E-ticaret operasyonlarını tek yerden yönetin</p></div>
-        <span className="ml-auto hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 sm:flex"><span className="size-2 rounded-full bg-emerald-500" />Yerel sistem</span>
+        <div className="ml-auto flex items-center gap-2"><QueueIndicator /><span className="hidden items-center gap-2 rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 sm:flex"><span className="size-2 rounded-full bg-emerald-500" />Yerel sistem</span></div>
       </header>
       {children}
     </div>

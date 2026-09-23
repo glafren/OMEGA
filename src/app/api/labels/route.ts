@@ -1,9 +1,11 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { NextResponse } from "next/server";
+import { workQueue } from "@/services/queue/workQueue";
 
 export const runtime = "nodejs";
 const execFileAsync = promisify(execFile);
@@ -35,12 +37,14 @@ export async function POST(request: Request) {
       writeFile(labelsPath, Buffer.from(await labels.arrayBuffer())),
     ]);
     const script = path.join(process.cwd(), "backend", "label", "label_cli.py");
-    await execFileAsync(process.env.PYTHON_EXECUTABLE || "python", [script, orderPath, labelsPath, outputPath], {
-      windowsHide: true,
-      timeout: 5 * 60 * 1000,
-      maxBuffer: 1024 * 1024,
+    const pdf = await workQueue.enqueue({ id: randomUUID(), type: "label", label: order.name }, async () => {
+      await execFileAsync(process.env.PYTHON_EXECUTABLE || "python", [script, orderPath, labelsPath, outputPath], {
+        windowsHide: true,
+        timeout: 5 * 60 * 1000,
+        maxBuffer: 1024 * 1024,
+      });
+      return readFile(outputPath);
     });
-    const pdf = await readFile(outputPath);
     return new NextResponse(pdf, {
       headers: {
         "content-type": "application/pdf",

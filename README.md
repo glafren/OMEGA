@@ -6,6 +6,7 @@
 - Sipariş bazlı IKEA stok/fiyat kontrolü ve PDF/Excel raporu
 - Ozon stok şablonu oluşturma
 - Sipariş Excel/CSV dosyasından yazılı ve sıralı etiket PDF'i hazırlama
+- Medya, stok ve etiket işlemleri için ortak, bellek içi iş kuyruğu
 
 ## İlk kurulum
 
@@ -47,6 +48,8 @@ tmp/                     Geçici medya işleri (git dışı)
 ```
 
 Stok servisi yalnızca `127.0.0.1:8010` üzerinde dinler; tarayıcı bu servise Next.js proxy üzerinden erişir. Yüklenen etiket dosyaları sistem geçici klasöründe işlenir ve yanıt sonrası silinir.
+
+Merkezi kuyruk varsayılan olarak aynı anda en fazla iki ağır işlem çalıştırır. Kapasite `.env.local` içindeki `OMEGA_QUEUE_CONCURRENCY` değeriyle değiştirilebilir. Kuyruk yalnızca uygulama çalışırken bellekte tutulur; işlem geçmişi kaydetmez.
 
 ## Kontroller
 

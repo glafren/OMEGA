@@ -26,7 +26,7 @@ async function createZip(outputDir: string, zipPath: string) {
 export async function createJob(input: string): Promise<JobRecord> {
   await jobStorage.cleanup();
   const now = new Date().toISOString();
-  const job: JobRecord = { jobId: randomUUID(), input, status: "queued", stage: "VALIDATING_INPUT", progress: 2, message: "Girdi doğrulandı", createdAt: now, updatedAt: now, outputs: [] };
+  const job: JobRecord = { jobId: randomUUID(), input, status: "queued", stage: "VALIDATING_INPUT", progress: 2, message: "Merkezi kuyrukta bekliyor", createdAt: now, updatedAt: now, outputs: [] };
   await jobStorage.createJob(job); return job;
 }
 

@@ -218,6 +218,10 @@ def validate_depot_type_workbook(path=DEPOT_TYPE_PATH):
     valid_types = {"UMT ExtraSmall", "UMT Express TR"}
     row_count = 0
 
+    headers = [str(value or "").strip().casefold() for value in next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())[:2]]
+    if headers != ["ürün kodu", "depo tipi"]:
+        issues.append({"level": "error", "line": 1, "text": " / ".join(headers), "reason": "Sütunlar 'Ürün Kodu' ve 'Depo Tipi' olmalı"})
+
     for row_index, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
         raw_product, depot_type = (row + (None, None))[:2] if isinstance(row, tuple) else (None, None)
         if not raw_product and not depot_type:
@@ -256,6 +260,9 @@ def validate_depot_type_workbook(path=DEPOT_TYPE_PATH):
                     "reason": f"{display_code(code)} kodu farklı depo tiplerinde kullanılıyor",
                 })
             code_types[code] = clean_type
+
+    if row_count == 0:
+        issues.append({"level": "error", "line": 2, "text": "", "reason": "Dosyada ürün satırı bulunamadı"})
 
     return {
         "row_count": row_count,
