@@ -3,7 +3,7 @@ import path from "node:path";
 
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const root = process.cwd();
-const python = process.env.PYTHON_EXECUTABLE || "python";
+const python = process.env.PYTHON_EXECUTABLE || (process.platform === "win32" ? "py" : "python3");
 const nextBin = path.join(root, "node_modules", "next", "dist", "bin", "next");
 const children = [];
 
