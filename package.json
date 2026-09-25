@@ -12,7 +12,7 @@
     "start": "node scripts/run.mjs start",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
-    "setup": "py -m pip install -r requirements.txt && playwright install chromium"
+    "setup": "node scripts/setup.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",

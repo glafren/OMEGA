@@ -4,7 +4,13 @@ where npm >nul 2>nul
 if %errorlevel%==0 (
   set PKG=npm
 ) else (
-  set PKG=pnpm
+  where pnpm >nul 2>nul
+  if %errorlevel%==0 (
+    set PKG=pnpm
+  ) else (
+    echo npm veya pnpm bulunamadi. Node.js 20.9+ kurun.
+    goto :error
+  )
 )
 if not exist node_modules (
   echo Ilk kurulum yapiliyor...

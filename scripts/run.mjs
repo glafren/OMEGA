@@ -1,11 +1,35 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import path from "node:path";
 
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const root = process.cwd();
-const python = process.env.PYTHON_EXECUTABLE || (process.platform === "win32" ? "py" : "python3");
 const nextBin = path.join(root, "node_modules", "next", "dist", "bin", "next");
 const children = [];
+
+function commandExists(command, args = ["--version"]) {
+  const result = spawnSync(command, args, { cwd: root, stdio: "ignore", shell: false });
+  return result.status === 0;
+}
+
+function resolvePython() {
+  if (process.env.PYTHON_EXECUTABLE) {
+    return { command: process.env.PYTHON_EXECUTABLE, args: [] };
+  }
+
+  const candidates =
+    process.platform === "win32"
+      ? [
+          { command: "py", args: [] },
+          { command: "python", args: [] },
+          { command: "python3", args: [] },
+        ]
+      : [
+          { command: "python3", args: [] },
+          { command: "python", args: [] },
+        ];
+
+  return candidates.find((candidate) => commandExists(candidate.command));
+}
 
 function launch(command, args, extraEnv = {}) {
   const child = spawn(command, args, {
@@ -18,7 +42,13 @@ function launch(command, args, extraEnv = {}) {
   return child;
 }
 
-const stock = launch(python, [path.join("backend", "stock", "siparis_app.py")], { OMEGA_STOCK_PORT: "8010" });
+const python = resolvePython();
+if (!python) {
+  console.error("Python bulunamadi. Python 3.10+ kurun veya PYTHON_EXECUTABLE ortam degiskenini ayarlayin.");
+  process.exit(1);
+}
+
+const stock = launch(python.command, [...python.args, path.join("backend", "stock", "siparis_app.py")], { OMEGA_STOCK_PORT: "8010" });
 const web = launch(process.execPath, [nextBin, mode, "-p", "3000"]);
 
 if (process.env.OMEGA_OPEN_BROWSER === "1") {
