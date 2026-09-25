@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, Menu, PackageSearch, Settings, Tags, X } from "lucide-react";
+import { BadgeDollarSign, ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, Menu, PackageSearch, Settings, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { QueueIndicator } from "@/components/queue-indicator";
@@ -11,6 +11,7 @@ import { QueueIndicator } from "@/components/queue-indicator";
 const navigation = [
   { href: "/media", label: "Medya Oluştur", description: "Görsel ve video", icon: ImageIcon },
   { href: "/stock", label: "Stok Kontrol", description: "Sipariş analizi", icon: PackageSearch },
+  { href: "/prices", label: "Fiyat Sorgu", description: "Ürün kodu fiyatı", icon: BadgeDollarSign },
   { href: "/stock-template", label: "Stok Şablonu", description: "Ozon Excel çıktısı", icon: FileSpreadsheet },
   { href: "/labels", label: "Etiket Yazdır", description: "PDF etiket düzenleme", icon: Tags },
 ];

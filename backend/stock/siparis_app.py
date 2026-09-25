@@ -15,7 +15,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import requests
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -25,7 +25,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from stokSorgula import check_stock_data
+from stokSorgula import check_stock_data, get_product_info
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -183,6 +183,72 @@ def check_order(text, include_product_info=True):
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_map = {
             executor.submit(build_order_item, item, include_product_info): index
+            for index, item in enumerate(items)
+        }
+        for future in as_completed(future_map):
+            results[future_map[future]] = future.result()
+
+    return {"items": results, "skipped_lines": skipped_lines}
+
+
+def parse_price_text(text):
+    items = OrderedDict()
+    skipped_lines = []
+
+    for line_no, raw_line in enumerate(str(text or "").splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+
+        matches = PRODUCT_CODE_RE.findall(line)
+        if not matches:
+            skipped_lines.append({"line": line_no, "text": raw_line, "reason": "Ürün kodu bulunamadı"})
+            continue
+
+        for raw_code in matches:
+            query_code = re.sub(r"\D", "", raw_code)
+            if query_code and query_code not in items:
+                items[query_code] = {"stock_code": display_code(query_code), "query_code": query_code, "lines": [line_no]}
+            elif query_code:
+                items[query_code]["lines"].append(line_no)
+
+    return list(items.values()), skipped_lines
+
+
+def build_price_item(item):
+    try:
+        product_info = get_product_info(item["query_code"])
+        product_name = product_info.get("product_name") or "Ürün adı alınamadı"
+        unit_price = product_info.get("unit_price")
+        image_url = product_info.get("image_url")
+        status = "ok" if unit_price is not None else "price_missing"
+        error = ""
+    except Exception as exc:
+        product_name = "Ürün bilgisi alınamadı"
+        unit_price = None
+        image_url = None
+        status = "error"
+        error = str(exc)
+
+    return {
+        "stock_code": item["stock_code"],
+        "query_code": item["query_code"],
+        "product_name": product_name,
+        "unit_price": unit_price,
+        "image_url": image_url,
+        "status": status,
+        "error": error,
+    }
+
+
+def check_prices(text):
+    items, skipped_lines = parse_price_text(text)
+    results = [None] * len(items)
+    worker_count = min(12, max(1, len(items)))
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_map = {
+            executor.submit(build_price_item, item): index
             for index, item in enumerate(items)
         }
         for future in as_completed(future_map):
@@ -906,6 +972,125 @@ def build_order_pdf(items, stores):
     return buffer.getvalue()
 
 
+def build_price_workbook(items):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "IKEA Fiyatları"
+    sheet.append(["Ürün Kodu", "Ürün Adı", "Birim Fiyat", "Durum", "Hata"])
+
+    for item in items:
+        sheet.append([
+            item.get("stock_code") or "",
+            item.get("product_name") or "",
+            item.get("unit_price") if item.get("unit_price") is not None else "",
+            "Fiyat bulundu" if item.get("status") == "ok" else "Fiyat alınamadı",
+            item.get("error") or "",
+        ])
+
+    widths = [16, 52, 16, 18, 44]
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[chr(64 + index)].width = width
+
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+def build_price_pdf(items):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        leftMargin=0.9 * cm,
+        rightMargin=0.9 * cm,
+        topMargin=0.9 * cm,
+        bottomMargin=0.9 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "PriceTitleTR",
+        parent=styles["Title"],
+        fontName=PDF_BOLD_FONT,
+        fontSize=15,
+        leading=18,
+        spaceAfter=6,
+    )
+    small_style = ParagraphStyle(
+        "PriceSmallTR",
+        parent=styles["Normal"],
+        fontName=PDF_FONT,
+        fontSize=8,
+        leading=10,
+    )
+    header_style = ParagraphStyle(
+        "PriceHeaderTR",
+        parent=small_style,
+        fontName=PDF_BOLD_FONT,
+        alignment=TA_CENTER,
+    )
+    right_style = ParagraphStyle(
+        "PriceRightTR",
+        parent=small_style,
+        alignment=TA_RIGHT,
+    )
+    center_style = ParagraphStyle(
+        "PriceCenterTR",
+        parent=small_style,
+        alignment=TA_CENTER,
+    )
+
+    priced_count = sum(1 for item in items if item.get("unit_price") is not None)
+    total_amount = sum(float(item.get("unit_price") or 0) for item in items)
+    story = [
+        Paragraph("IKEA Ürün Fiyat Listesi", title_style),
+        Paragraph(
+            f"Ürün sayısı: {len(items)} &nbsp;&nbsp; Fiyat bulunan: {priced_count} &nbsp;&nbsp; Toplam: {money(total_amount)}",
+            small_style,
+        ),
+        Spacer(1, 0.25 * cm),
+    ]
+
+    table_data = [[
+        Paragraph("Kod", header_style),
+        Paragraph("Ürün adı", header_style),
+        Paragraph("Birim fiyat", header_style),
+        Paragraph("Durum", header_style),
+    ]]
+    for item in items:
+        table_data.append([
+            Paragraph(str(item.get("stock_code") or ""), center_style),
+            Paragraph(str(item.get("product_name") or ""), small_style),
+            Paragraph(money(item.get("unit_price")), right_style),
+            Paragraph("Fiyat bulundu" if item.get("status") == "ok" else "Fiyat alınamadı", center_style),
+        ])
+
+    table = Table(table_data, colWidths=[3.0 * cm, 9.2 * cm, 3.0 * cm, 3.1 * cm], repeatRows=1)
+    style = TableStyle(
+        [
+            ("FONTNAME", (0, 0), (-1, -1), PDF_FONT),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef1ed")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f2933")),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cfd6ce")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 5),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ]
+    )
+    for row_index, item in enumerate(items, start=1):
+        if row_index % 2 == 0:
+            style.add("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#fbfbfa"))
+        if item.get("unit_price") is None:
+            style.add("BACKGROUND", (2, row_index), (3, row_index), colors.HexColor("#fff0bf"))
+
+    table.setStyle(style)
+    story.append(table)
+    doc.build(story)
+    return buffer.getvalue()
+
+
 class SiparisHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(204)
@@ -953,6 +1138,9 @@ class SiparisHandler(BaseHTTPRequestHandler):
         if path not in {
             "/api/check-order",
             "/api/export-pdf",
+            "/api/check-prices",
+            "/api/export-prices-excel",
+            "/api/export-prices-pdf",
             "/api/export-stock-template",
             "/api/start-stock-template",
             "/api/settings",
@@ -977,6 +1165,31 @@ class SiparisHandler(BaseHTTPRequestHandler):
                 text = payload.get("text", "")
                 include_product_info = bool(payload.get("includeProductInfo", True))
                 self.send_json(check_order(text, include_product_info=include_product_info))
+                return
+
+            if path == "/api/check-prices":
+                text = payload.get("text", "")
+                self.send_json(check_prices(text))
+                return
+
+            if path == "/api/export-prices-excel":
+                items = payload.get("items", [])
+                workbook_data = build_price_workbook(items)
+                self.send_bytes(
+                    workbook_data,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    'attachment; filename="ikea-fiyat-listesi.xlsx"',
+                )
+                return
+
+            if path == "/api/export-prices-pdf":
+                items = payload.get("items", [])
+                pdf_data = build_price_pdf(items)
+                self.send_bytes(
+                    pdf_data,
+                    "application/pdf",
+                    'attachment; filename="ikea-fiyat-listesi.pdf"',
+                )
                 return
 
             if path == "/api/export-stock-template":
