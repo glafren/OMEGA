@@ -24,17 +24,20 @@ async function proxy(request: NextRequest, context: { params: Promise<{ path: st
     }
     const target = `http://127.0.0.1:8010/api/${backendPath.map(encodeURIComponent).join("/")}`;
     const body = request.method === "GET" ? undefined : await request.arrayBuffer();
-    const execute = () => fetch(target, { method: request.method, body, headers: request.headers.get("content-type") ? { "content-type": request.headers.get("content-type")! } : undefined, cache: "no-store" });
+    const execute = (signal?: AbortSignal) => fetch(target, { method: request.method, body, headers: request.headers.get("content-type") ? { "content-type": request.headers.get("content-type")! } : undefined, cache: "no-store", signal });
     const response = request.method === "POST" && path[0] === "check-order"
-      ? await workQueue.enqueue({ id: randomUUID(), type: "stock-check", label: "Sipariş stok kontrolü" }, execute)
-      : await execute();
+      ? await workQueue.enqueue({ id: randomUUID(), type: "stock-check", label: "Sipariş stok kontrolü" }, execute, { signal: request.signal })
+      : await execute(request.signal);
     const headers = new Headers();
     for (const key of ["content-type", "content-disposition", "x-generated-rows", "x-skipped-count", "x-stock-error-count"]) {
       const value = response.headers.get(key);
       if (value) headers.set(key, value);
     }
     return new NextResponse(response.body, { status: response.status, headers });
-  } catch {
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return NextResponse.json({ error: "Stok kontrolü durduruldu." }, { status: 499 });
+    }
     return NextResponse.json({ error: "Stok servisine ulaşılamadı. Uygulamayı baslat.bat ile açın." }, { status: 503 });
   }
 }
