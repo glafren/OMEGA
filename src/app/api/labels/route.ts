@@ -11,6 +11,11 @@ export const runtime = "nodejs";
 const execFileAsync = promisify(execFile);
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
+function countPdfPages(pdf: Buffer) {
+  const text = pdf.toString("latin1");
+  return (text.match(/\/Type\s*\/Page(?!s)\b/g) || []).length;
+}
+
 export async function POST(request: Request) {
   let workDir = "";
   try {
@@ -45,10 +50,14 @@ export async function POST(request: Request) {
       });
       return readFile(outputPath);
     });
+    const filename = `${new Date().toISOString().slice(0, 10)}-yazili-etiketler.pdf`;
+    const pageCount = countPdfPages(pdf);
     return new NextResponse(pdf, {
       headers: {
         "content-type": "application/pdf",
-        "content-disposition": `attachment; filename="${new Date().toISOString().slice(0, 10)}-yazili-etiketler.pdf"`,
+        "content-disposition": `attachment; filename="${filename}"`,
+        "x-label-page-count": String(pageCount),
+        "x-label-file-name": filename,
       },
     });
   } catch (error) {
