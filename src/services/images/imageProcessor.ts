@@ -5,6 +5,7 @@ import { appConfig } from "@/config/app-config";
 import { defaultTemplate, type ImageTemplateConfig } from "@/config/image-template";
 import { centeredPlacement } from "@/lib/image-layout";
 import { textLayer } from "./textRenderer";
+import type { ProductBrand } from "@/types";
 
 async function containedBuffer(sourcePath: string, area: { x: number; y: number; width: number; height: number }, options: { trimWhitespace?: boolean; enlarge?: boolean } = {}) {
   let buffer = await sharp(sourcePath, { failOn: "warning", limitInputPixels: 80_000_000 }).rotate().flatten({ background: "#FFFFFF" }).toColourspace("srgb").png().toBuffer();
@@ -28,17 +29,21 @@ async function logoLayer(file: string, width: number, maxHeight: number, x: numb
   return { input: buffer, left: x, top: y };
 }
 
-export async function generateCover(sourcePath: string, destination: string, modelName: string, productCode: string, brandingDir: string, config: ImageTemplateConfig = defaultTemplate, quality = appConfig.jpegQuality) {
+export async function generateCover(sourcePath: string, destination: string, modelName: string, productCode: string, brandingDir: string, config: ImageTemplateConfig = defaultTemplate, quality = appConfig.jpegQuality, brand: ProductBrand = "ikea") {
   const product = config.product;
   const productLayer = await containedBuffer(sourcePath, { x: product.areaX + product.padding, y: product.areaY + product.padding, width: product.areaWidth - product.padding * 2, height: product.areaHeight - product.padding * 2 }, { trimWhitespace: true, enlarge: true });
-  const ikea = await logoLayer(path.join(brandingDir, "ikea-logo.png"), config.ikeaLogo.width, config.ikeaLogo.maxHeight, config.ikeaLogo.x, config.ikeaLogo.y);
+  const brandLogo = await logoLayer(path.join(brandingDir, brand === "philips" ? "Philipslogo.png" : "ikea-logo.png"), config.ikeaLogo.width, config.ikeaLogo.maxHeight, config.ikeaLogo.x, config.ikeaLogo.y);
   const store = await logoLayer(path.join(brandingDir, "store-logo.png"), config.storeLogo.width, config.storeLogo.maxHeight, config.storeLogo.x, config.storeLogo.y);
-  let embeddedFont: { base64: string; format: "opentype" | "truetype" } | undefined;
-  for (const [filename, format] of [["Montserrat-Bold.ttf", "truetype"]] as const) {
-    try { embeddedFont = { base64: (await readFile(path.join(process.cwd(), "public", "fonts", filename))).toString("base64"), format }; break; } catch {}
+  let text: Buffer | null = null;
+  if (brand === "ikea") {
+    let embeddedFont: { base64: string; format: "opentype" | "truetype" } | undefined;
+    for (const [filename, format] of [["Montserrat-Bold.ttf", "truetype"]] as const) {
+      try { embeddedFont = { base64: (await readFile(path.join(process.cwd(), "public", "fonts", filename))).toString("base64"), format }; break; } catch {}
+    }
+    text = textLayer(modelName, productCode, { width: config.canvasWidth, height: config.canvasHeight, nameX: config.productName.x, nameY: config.productName.y, nameMaxWidth: config.productName.maxWidth, nameFontSize: config.productName.fontSize, nameMinSize: config.productName.minFontSize, nameFontWeight: config.productName.fontWeight, nameFontFamily: config.productName.fontFamily, nameColor: config.productName.color, shadowAngle: config.productName.shadow.angle, shadowDistance: config.productName.shadow.distance, shadowOpacity: config.productName.shadow.opacity, embeddedFont, codeX: config.productCode.x, codeY: config.productCode.y, codeFontSize: config.productCode.fontSize, codeFontWeight: config.productCode.fontWeight, codeFontFamily: config.productCode.fontFamily, codeColor: config.productCode.color });
   }
-  const text = textLayer(modelName, productCode, { width: config.canvasWidth, height: config.canvasHeight, nameX: config.productName.x, nameY: config.productName.y, nameMaxWidth: config.productName.maxWidth, nameFontSize: config.productName.fontSize, nameMinSize: config.productName.minFontSize, nameFontWeight: config.productName.fontWeight, nameFontFamily: config.productName.fontFamily, nameColor: config.productName.color, shadowAngle: config.productName.shadow.angle, shadowDistance: config.productName.shadow.distance, shadowOpacity: config.productName.shadow.opacity, embeddedFont, codeX: config.productCode.x, codeY: config.productCode.y, codeFontSize: config.productCode.fontSize, codeFontWeight: config.productCode.fontWeight, codeFontFamily: config.productCode.fontFamily, codeColor: config.productCode.color });
-  await sharp({ create: { width: config.canvasWidth, height: config.canvasHeight, channels: 3, background: config.backgroundColor } }).composite([productLayer, ikea, store, { input: text, left: 0, top: 0 }]).jpeg({ quality, chromaSubsampling: "4:4:4" }).toFile(destination);
+  const layers = [productLayer, brandLogo, store, ...(text ? [{ input: text, left: 0, top: 0 }] : [])];
+  await sharp({ create: { width: config.canvasWidth, height: config.canvasHeight, channels: 3, background: config.backgroundColor } }).composite(layers).jpeg({ quality, chromaSubsampling: "4:4:4" }).toFile(destination);
 }
 
 export async function generateGalleryImage(sourcePath: string, destination: string, background = "#FFFFFF", quality = appConfig.jpegQuality) {

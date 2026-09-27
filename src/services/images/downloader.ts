@@ -5,7 +5,7 @@ import { appConfig } from "@/config/app-config";
 import { AppError } from "@/lib/errors";
 
 async function downloadOne(url: string, destination: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { "user-agent": "Mozilla/5.0 IKEA-Ozon-Studio/1.0", accept: "image/avif,image/webp,image/*" } });
+  const response = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { "user-agent": "Mozilla/5.0 OMEGA-Operations/1.0", accept: "image/avif,image/webp,image/*" } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const type = response.headers.get("content-type") || "";
   if (!type.startsWith("image/")) throw new Error("Yanıt görsel değil");

@@ -52,7 +52,7 @@ export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress)
     progress("EXTRACTING_IMAGES", "Ürün görselleri aranıyor", 36);
     const images = deduplicateImageUrls(raw.images).filter((image) => !image.width || image.width >= 300).slice(0, 20);
     if (!images.length) throw new AppError("Bu ürün için görsel bulunamadı.", "NO_IMAGES");
-    return { productCode, modelName, fullName, sourceUrl: finalUrl, images };
+    return { brand: "ikea", productCode, modelName, fullName, sourceUrl: finalUrl, images };
   } catch (error) {
     if (error instanceof AppError) throw error;
     throw new AppError("IKEA ürün sayfası işlenemedi.", "SCRAPE_FAILED", { cause: error });

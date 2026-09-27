@@ -1,10 +1,12 @@
 import { createWriteStream } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import archiver from "archiver";
 import { AppError, friendlyError } from "@/lib/errors";
-import type { JobEvent, JobRecord, JobStage, OutputImage } from "@/types";
+import type { JobEvent, JobRecord, JobStage, OutputImage, ProductBrand } from "@/types";
 import { scrapeIkeaProduct } from "@/services/ikea/ikeaScraper";
+import { scrapePhilipsProduct } from "@/services/philips/philipsScraper";
 import { codeDigits } from "@/services/ikea/productCode";
 import { downloadImages } from "@/services/images/downloader";
 import { generateCover, generateGalleryImage } from "@/services/images/imageProcessor";
@@ -12,6 +14,7 @@ import { emitJobEvent } from "./jobEvents";
 import { jobStorage } from "@/services/storage/localStorage";
 import { readSettings, settingsToTemplate } from "@/services/settings/settingsService";
 import { createProductVideo } from "@/services/video/videoCreator";
+import { createPhilipsRichContent } from "@/services/philips/richContent";
 
 const brandingDir = path.join(process.cwd(), "public", "branding");
 
@@ -23,10 +26,10 @@ async function createZip(outputDir: string, zipPath: string) {
   });
 }
 
-export async function createJob(input: string): Promise<JobRecord> {
+export async function createJob(input: string, brand: ProductBrand = "ikea"): Promise<JobRecord> {
   await jobStorage.cleanup();
   const now = new Date().toISOString();
-  const job: JobRecord = { jobId: randomUUID(), input, status: "queued", stage: "VALIDATING_INPUT", progress: 2, message: "Merkezi kuyrukta bekliyor", createdAt: now, updatedAt: now, outputs: [] };
+  const job: JobRecord = { jobId: randomUUID(), input, brand, status: "queued", stage: "VALIDATING_INPUT", progress: 2, message: "Merkezi kuyrukta bekliyor", createdAt: now, updatedAt: now, outputs: [] };
   await jobStorage.createJob(job); return job;
 }
 
@@ -38,15 +41,17 @@ export async function runJob(jobId: string) {
   };
   try {
     await update("VALIDATING_INPUT", "Girdi doğrulandı", 5);
-    const product = await scrapeIkeaProduct(job.input, (stage, message, progress) => { void update(stage, message, progress); });
+    const brand = job.brand || "ikea";
+    const scraper = brand === "philips" ? scrapePhilipsProduct : scrapeIkeaProduct;
+    const product = await scraper(job.input, (stage, message, progress) => { void update(stage, message, progress); });
     job.product = product; await jobStorage.writeJob(job);
     await update("EXTRACTING_IMAGES", `${product.images.length} ürün görseli bulundu`, 42);
     await update("DOWNLOADING_IMAGES", "Görseller indiriliyor", 48);
     const paths = jobStorage.paths(jobId); const downloaded = await downloadImages(product.images.map((image) => image.url), paths.source);
-    const prefix = codeDigits(product.productCode); const outputs: OutputImage[] = [];
+    const prefix = brand === "philips" ? product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase() : codeDigits(product.productCode); const outputs: OutputImage[] = [];
     await update("PROCESSING_COVER", "Kapak görseli hazırlanıyor", 62);
     const coverName = `${prefix}_01.jpg`; const settings = await readSettings();
-    await generateCover(downloaded[0], path.join(paths.output, coverName), product.modelName, product.productCode, brandingDir, settingsToTemplate(settings), settings.jpegQuality);
+    await generateCover(downloaded[0], path.join(paths.output, coverName), product.modelName, product.productCode, brandingDir, settingsToTemplate(settings), settings.jpegQuality, brand);
     outputs.push({ id: "01", filename: coverName, width: 750, height: 1000, isCover: true });
     await update("PROCESSING_GALLERY", "Galeri görselleri hazırlanıyor", 70);
     for (let index = 1; index < downloaded.length; index++) {
@@ -59,8 +64,16 @@ export async function runJob(jobId: string) {
     const videoName = `${prefix}_video.mp4`;
     await createProductVideo(outputs.map((output) => path.join(paths.output, output.filename)), path.join(paths.output, videoName), settings.videoDurationSeconds);
     job.video = { filename: videoName, width: 750, height: 1000, durationSeconds: settings.videoDurationSeconds }; await jobStorage.writeJob(job);
-    await update("CREATING_ZIP", "Medya ZIP arşivi oluşturuluyor", 96); await createZip(paths.output, paths.zip);
-    await update("COMPLETED", `${outputs.length} görsel ve video başarıyla oluşturuldu`, 100);
+    if (brand === "philips") {
+      await update("CREATING_RICH_CONTENT", "Rusça Ozon Rich Content hazırlanıyor", 95);
+      const richContent = await createPhilipsRichContent(product.features || []);
+      const filename = `${prefix}_rich-content.json`;
+      await writeFile(path.join(paths.output, filename), JSON.stringify(richContent, null, 2), "utf8");
+      job.richContent = { filename, blockCount: product.features?.length || 0, language: "ru" };
+      await jobStorage.writeJob(job);
+    }
+    await update("CREATING_ZIP", "Medya ZIP arşivi oluşturuluyor", 98); await createZip(paths.output, paths.zip);
+    await update("COMPLETED", `${outputs.length} görsel, video${job.richContent ? " ve Rich Content JSON" : ""} başarıyla oluşturuldu`, 100);
   } catch (error) {
     console.error(`[job:${jobId}]`, error);
     const message = friendlyError(error); job.error = error instanceof AppError ? error.code : "UNEXPECTED"; await update("ERROR", message, job.progress);

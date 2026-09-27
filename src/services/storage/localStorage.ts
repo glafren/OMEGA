@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { appConfig } from "@/config/app-config";
 import { assertSafeId } from "@/lib/validation";
@@ -13,7 +14,13 @@ export class LocalJobStorage implements StorageAdapter {
   }
   async createJob(job: JobRecord) { const paths = this.paths(job.jobId); await mkdir(paths.source, { recursive: true }); await mkdir(paths.output, { recursive: true }); await this.writeJob(job); return paths; }
   async readJob(jobId: string) { try { return JSON.parse(await readFile(this.paths(jobId).metadata, "utf8")) as JobRecord; } catch { return null; } }
-  async writeJob(job: JobRecord) { const paths = this.paths(job.jobId); await mkdir(paths.root, { recursive: true }); await writeFile(paths.metadata, JSON.stringify(job, null, 2)); }
+  async writeJob(job: JobRecord) {
+    const paths = this.paths(job.jobId);
+    const temporaryPath = `${paths.metadata}.${randomUUID()}.tmp`;
+    await mkdir(paths.root, { recursive: true });
+    await writeFile(temporaryPath, JSON.stringify(job, null, 2));
+    await rename(temporaryPath, paths.metadata);
+  }
   async cleanup() {
     await mkdir(this.basePath, { recursive: true });
     const entries = await readdir(this.basePath, { withFileTypes: true }); const cutoff = Date.now() - appConfig.retentionHours * 3_600_000;
