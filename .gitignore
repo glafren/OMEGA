@@ -7,6 +7,7 @@ public/branding/store-logo.*
 !public/branding/store-logo.png
 public/branding/omega-brand-logo.png
 npm-debug.log*
+*.tsbuildinfo
 backend/stock/outputs/
 backend/stock/templates/Depo Tipi.backup.xlsx
 backend/**/__pycache__/

@@ -3,6 +3,17 @@ import type { RawProductData } from "./types";
 
 type JsonValue = Record<string, unknown>;
 
+function cleanDescription(value: string) {
+  return value
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function collectJsonLd(value: unknown, data: RawProductData) {
   if (Array.isArray(value)) return value.forEach((item) => collectJsonLd(item, data));
   if (!value || typeof value !== "object") return;
@@ -11,6 +22,7 @@ function collectJsonLd(value: unknown, data: RawProductData) {
   if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
     if (typeof object.name === "string") data.name ||= object.name;
     if (typeof object.sku === "string") data.code ||= object.sku;
+    if (typeof object.description === "string") data.description ||= cleanDescription(object.description);
     const images = Array.isArray(object.image) ? object.image : [object.image];
     for (const image of images) {
       if (typeof image === "string") data.images.push({ url: image });
@@ -32,6 +44,11 @@ export async function parseProductPage(page: Page): Promise<RawProductData> {
       if (type === "Product" || (Array.isArray(type) && type.includes("Product"))) {
         if (typeof item.name === "string") data.name ||= item.name;
         if (typeof item.sku === "string") data.code ||= item.sku;
+        if (typeof item.description === "string") {
+          const container = document.createElement("div");
+          container.innerHTML = item.description.replace(/<\/(p|li|div)>/gi, " </$1>");
+          data.description ||= container.textContent?.replace(/\s+/g, " ").trim();
+        }
         const values = Array.isArray(item.image) ? item.image : [item.image];
         values.forEach((value) => {
           if (typeof value === "string") add(value);
@@ -43,6 +60,18 @@ export async function parseProductPage(page: Page): Promise<RawProductData> {
     document.querySelectorAll('script[type="application/ld+json"]').forEach((script) => { try { walk(JSON.parse(script.textContent || "")); } catch {} });
     const meta = (selector: string) => document.querySelector<HTMLMetaElement>(selector)?.content;
     data.name ||= meta('meta[property="og:title"]') || document.querySelector("h1")?.textContent?.trim();
+    data.description ||= meta('meta[name="description"]')?.replace(/\s+/g, " ").trim();
+    data.details = Array.from(document.querySelectorAll<HTMLElement>("#product-information-modal .modal-accordion-box")).flatMap((section) => {
+      const title = section.querySelector<HTMLElement>(".modal-accordion-header-title")?.textContent?.replace(/\s+/g, " ").trim();
+      if (!title || /stok/i.test(title)) return [];
+      const contentRoot = section.querySelector<HTMLElement>(".modal-accordion-content");
+      if (!contentRoot) return [];
+      const parts = Array.from(contentRoot.querySelectorAll<HTMLElement>("h4, p, li"))
+        .map((item) => item.textContent?.replace(/\s+/g, " ").trim())
+        .filter((item): item is string => Boolean(item));
+      const content = (parts.length ? parts.join("\n") : contentRoot.textContent || "").replace(/\s+/g, " ").trim();
+      return content ? [{ title, content }] : [];
+    });
     add(meta('meta[property="og:image"]'));
     document.querySelectorAll<HTMLImageElement>("main img, [data-testid*=gallery] img, picture img").forEach((img) => {
       const sources = [img.currentSrc, img.src, img.dataset.src];

@@ -8,11 +8,39 @@ import { fitProductName } from "@/services/images/textRenderer";
 import { calculateSlideDuration, TRANSITION_SECONDS } from "@/services/video/videoCreator";
 import { canonicalizePhilipsFeatureImage, canonicalizePhilipsImage } from "@/services/philips/philipsScraper";
 import { createPhilipsRichContent } from "@/services/philips/richContent";
+import { createIkeaRichContent, selectIkeaRichContentTemplate } from "@/services/ikea/richContent";
+import type { IkeaProduct } from "@/types";
 
 describe("ürün kodu", () => { it("normalize eder", () => { expect(normalizeProductCode("806 264 18")).toBe("806.264.18"); expect(normalizeProductCode("80626418")).toBe("806.264.18"); }); it("geçersiz kodu reddeder", () => expect(normalizeProductCode("123")).toBeNull()); });
 describe("URL güvenliği", () => { it("IKEA alan adlarını kabul eder", () => { expect(isAllowedIkeaUrl("https://www.ikea.com.tr/urun/test-80626418")).toBe(true); expect(isAllowedIkeaUrl("https://ikea.de/de/p/test")).toBe(true); }); it("yanıltıcı ve güvensiz adresleri reddeder", () => { expect(isAllowedIkeaUrl("https://ikea.com.evil.test/x")).toBe(false); expect(isAllowedIkeaUrl("http://ikea.com/x")).toBe(false); }); });
 describe("Philips doğrulaması", () => { it("yalnızca resmi Türkiye ürün linkini kabul eder", () => { const url = "https://www.philips.com.tr/c-p/QP2824_10/oneblade-yuez-ve-vuecut"; expect(isAllowedPhilipsUrl(url)).toBe(true); expect(createJobSchema.safeParse({ brand: "philips", input: url }).success).toBe(true); expect(isAllowedPhilipsUrl("https://www.philips.com.tr/support/test")).toBe(false); expect(isAllowedPhilipsUrl("https://philips.com.tr.evil.test/c-p/test")).toBe(false); }); it("görselleri uygun Philips CDN adreslerine dönüştürür", () => { expect(canonicalizePhilipsImage("https://images.philips.com/is/image/philipsconsumer/abc?$png$&wid=410")).toBe("https://images.philips.com/is/image/philipsconsumer/abc?$png$&wid=2000&hei=2000&fit=constrain"); expect(canonicalizePhilipsFeatureImage("https://images.philips.com/is/image/philipsconsumer/card?$png$&wid=400")).toBe("https://images.philips.com/is/image/philipsconsumer/card?$png$&wid=1416"); }); });
 describe("Philips Rich Content", () => { it("özellik kartını Ozon şemasında Rusça tileL bloğuna dönüştürür", async () => { const result = await createPhilipsRichContent([{ imageUrl: "https://images.philips.com/is/image/philipsconsumer/card?$png$&wid=1416", title: "Tüm bakım ihtiyaçlarınız için 9 başlık", text: "Erkek bakım setimiz, sakalınızı kısaltmanız ve şekillendirmeniz, saçınızı kısaltmanız ve vücut bakımınızı yapmanız için 9 farklı başlıkla birlikte gelir; böylece kişisel bakım ihtiyaçlarınızın tümünü kolayca karşılar." }]); expect(result.version).toBe(0.3); expect(result.content[0]).toMatchObject({ widgetName: "raShowcase", type: "tileL" }); expect(result.content[0].blocks[0].title.items[0].content).toBe("9 насадок для всех ваших потребностей по уходу"); expect(result.content[0].blocks[0].img.widthMobile).toBe(400); }); });
+describe("IKEA Rich Content", () => {
+  const copy = {
+    headline: "HACKIG — набор ножей",
+    benefits: Array.from({ length: 6 }, (_, index) => ({ title: `Преимущество ${index + 1}`, description: `Подробное описание преимущества номер ${index + 1}, основанное на фактах о товаре и объясняющее практическую пользу для покупателя.` })),
+    specifications: [{ label: "Материал", value: "Керамика" }],
+  };
+  const product = (imageCount: number): IkeaProduct => ({
+    brand: "ikea", productCode: "105.984.85", modelName: "HACKIG", fullName: "HACKIG bıçak seti",
+    sourceUrl: "https://www.ikea.com.tr/urun/test-10598485", description: "Üç seramik bıçak.",
+    images: Array.from({ length: imageCount }, (_, index) => ({ url: `https://image-ikea.test/${index}.jpg`, order: index })),
+  });
+  it("görsel sayısına göre şablon seçer", () => {
+    expect(selectIkeaRichContentTemplate(8)).toBe("gallery");
+    expect(selectIkeaRichContentTemplate(5)).toBe("chess");
+    expect(selectIkeaRichContentTemplate(3)).toBe("compact");
+  });
+  it("çok görselde tileL, az görselde liste ve metin kartı üretir", () => {
+    const gallery = createIkeaRichContent(product(8), copy);
+    expect(gallery.content.map((widget) => widget.widgetName)).toEqual(["raShowcase", "raShowcase", "raShowcase"]);
+    expect(gallery.content[2]).toMatchObject({ type: "tileL" });
+    expect(gallery.content[0]).toMatchObject({ blocks: [{ img: { src: "https://ir-20.ozone.ru/s3/multimedia-1-d/ww1200/14789671717.jpg" } }] });
+    const compact = createIkeaRichContent(product(2), copy);
+    expect(compact.content.some((widget) => widget.widgetName === "list")).toBe(true);
+    expect(compact.content.some((widget) => widget.widgetName === "raTextBlock")).toBe(true);
+  });
+});
 describe("dosya adı", () => it("tehlikeli karakterleri temizler", () => expect(sanitizeFilename("../ürün <01>.jpg")).toBe("urun-01-.jpg")));
 describe("yerleşim", () => { it("oranı koruyarak sığdırır", () => expect(containSize(1000, 1000, 700, 950)).toEqual({ width: 700, height: 700 })); it("ortalar", () => expect(centeredPlacement(1000, 500, 25, 25, 700, 950)).toEqual({ width: 700, height: 350, left: 25, top: 325 })); });
 describe("metin", () => it("uzun adı en fazla iki satıra böler", () => expect(fitProductName("ÇOK UZUN BİR IKEA ÜRÜN MODEL ADI", 240, 44, 20).lines.length).toBeLessThanOrEqual(2)));

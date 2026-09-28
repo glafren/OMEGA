@@ -11,11 +11,14 @@ export interface IkeaProductImage { url: string; width?: number; height?: number
 export interface PhilipsFeature { imageUrl: string; title: string; text: string }
 export interface IkeaProduct {
   brand: ProductBrand; productCode: string; modelName: string; fullName?: string; sourceUrl: string;
-  images: IkeaProductImage[]; features?: PhilipsFeature[];
+  images: IkeaProductImage[]; description?: string; details?: Array<{ title: string; content: string }>; features?: PhilipsFeature[];
 }
 export interface OutputImage { id: string; filename: string; width: 750; height: 1000; isCover: boolean }
 export interface OutputVideo { filename: string; width: 750; height: 1000; durationSeconds: number }
-export interface OutputRichContent { filename: string; blockCount: number; language: "ru" }
+export interface OutputRichContent {
+  filename: string; blockCount: number; language: "ru";
+  model?: string; inputTokens?: number; outputTokens?: number; totalTokens?: number;
+}
 export interface JobEvent { jobId: string; stage: JobStage; message: string; progress: number; timestamp: string }
 export interface JobRecord {
   jobId: string; input: string; brand?: ProductBrand; status: JobStatus; stage: JobStage; progress: number;

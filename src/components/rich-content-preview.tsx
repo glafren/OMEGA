@@ -5,7 +5,7 @@ import { AlertCircle, Check, Clipboard, FileJson, LoaderCircle } from "lucide-re
 import { Button } from "./ui/button";
 import { Card } from "./ui/card";
 
-export function RichContentPreview({ jobId, blockCount }: { jobId: string; blockCount: number }) {
+export function RichContentPreview({ jobId, blockCount, model, totalTokens }: { jobId: string; blockCount: number; model?: string; totalTokens?: number }) {
   const [content, setContent] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
@@ -42,7 +42,7 @@ export function RichContentPreview({ jobId, blockCount }: { jobId: string; block
     <div className="flex flex-col gap-4 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
       <div className="flex items-center gap-3">
         <span className="grid size-11 place-items-center rounded-xl bg-blue-50 text-blue-700"><FileJson className="size-5" /></span>
-        <div><h3 className="font-bold text-slate-950">Ozon Rich Content JSON</h3><p className="text-sm text-slate-500">{blockCount} blok · Rusça · Kopyalamaya hazır</p></div>
+        <div><h3 className="font-bold text-slate-950">Ozon Rich Content JSON</h3><p className="text-sm text-slate-500">{blockCount} blok · Rusça{model ? ` · ${model}` : ""}{totalTokens ? ` · ${totalTokens.toLocaleString("tr-TR")} token` : ""} · Kopyalamaya hazır</p></div>
       </div>
       <Button onClick={() => void copy()} disabled={!content}>{copied ? <Check className="size-4" /> : <Clipboard className="size-4" />}{copied ? "Kopyalandı" : "JSON'u Kopyala"}</Button>
     </div>

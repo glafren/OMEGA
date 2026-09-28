@@ -15,6 +15,8 @@ import { jobStorage } from "@/services/storage/localStorage";
 import { readSettings, settingsToTemplate } from "@/services/settings/settingsService";
 import { createProductVideo } from "@/services/video/videoCreator";
 import { createPhilipsRichContent } from "@/services/philips/richContent";
+import { createIkeaRichContent, countRichContentBlocks } from "@/services/ikea/richContent";
+import { generateIkeaRichContentCopy } from "@/services/openai/richContentCopy";
 
 const brandingDir = path.join(process.cwd(), "public", "branding");
 
@@ -64,14 +66,21 @@ export async function runJob(jobId: string) {
     const videoName = `${prefix}_video.mp4`;
     await createProductVideo(outputs.map((output) => path.join(paths.output, output.filename)), path.join(paths.output, videoName), settings.videoDurationSeconds);
     job.video = { filename: videoName, width: 750, height: 1000, durationSeconds: settings.videoDurationSeconds }; await jobStorage.writeJob(job);
+    await update("CREATING_RICH_CONTENT", "Rusça Ozon Rich Content hazırlanıyor", 95);
+    let modelUsage: Pick<NonNullable<JobRecord["richContent"]>, "model" | "inputTokens" | "outputTokens" | "totalTokens"> = {};
+    let richContent;
     if (brand === "philips") {
-      await update("CREATING_RICH_CONTENT", "Rusça Ozon Rich Content hazırlanıyor", 95);
-      const richContent = await createPhilipsRichContent(product.features || []);
-      const filename = `${prefix}_rich-content.json`;
-      await writeFile(path.join(paths.output, filename), JSON.stringify(richContent, null, 2), "utf8");
-      job.richContent = { filename, blockCount: product.features?.length || 0, language: "ru" };
-      await jobStorage.writeJob(job);
+      richContent = await createPhilipsRichContent(product.features || []);
+    } else {
+      const generated = await generateIkeaRichContentCopy(product);
+      richContent = createIkeaRichContent(product, generated.copy);
+      modelUsage = { model: generated.model, ...generated.usage };
     }
+    const filename = `${prefix}_rich-content.json`;
+    await writeFile(path.join(paths.output, filename), JSON.stringify(richContent, null, 2), "utf8");
+    const blockCount = brand === "philips" ? product.features?.length || 0 : countRichContentBlocks(richContent);
+    job.richContent = { filename, blockCount, language: "ru", ...modelUsage };
+    await jobStorage.writeJob(job);
     await update("CREATING_ZIP", "Medya ZIP arşivi oluşturuluyor", 98); await createZip(paths.output, paths.zip);
     await update("COMPLETED", `${outputs.length} görsel, video${job.richContent ? " ve Rich Content JSON" : ""} başarıyla oluşturuldu`, 100);
   } catch (error) {
