@@ -11,9 +11,12 @@ export const runtime = "nodejs";
 const execFileAsync = promisify(execFile);
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
-function countPdfPages(pdf: Buffer) {
-  const text = pdf.toString("latin1");
-  return (text.match(/\/Type\s*\/Page(?!s)\b/g) || []).length;
+function parseLabelMetadata(stdout: string) {
+  const metadata = JSON.parse(stdout) as { pageCount?: unknown };
+  if (!Number.isInteger(metadata.pageCount) || Number(metadata.pageCount) < 1) {
+    throw new Error("Etiket PDF sayfa sayısı okunamadı.");
+  }
+  return { pageCount: Number(metadata.pageCount) };
 }
 
 export async function POST(request: Request) {
@@ -42,21 +45,21 @@ export async function POST(request: Request) {
       writeFile(labelsPath, Buffer.from(await labels.arrayBuffer())),
     ]);
     const script = path.join(process.cwd(), "backend", "label", "label_cli.py");
-    const pdf = await workQueue.enqueue({ id: randomUUID(), type: "label", label: order.name }, async () => {
-      await execFileAsync(process.env.PYTHON_EXECUTABLE || "python", [script, orderPath, labelsPath, outputPath], {
+    const result = await workQueue.enqueue({ id: randomUUID(), type: "label", label: order.name }, async () => {
+      const { stdout } = await execFileAsync(process.env.PYTHON_EXECUTABLE || "python", [script, orderPath, labelsPath, outputPath], {
         windowsHide: true,
         timeout: 5 * 60 * 1000,
         maxBuffer: 1024 * 1024,
       });
-      return readFile(outputPath);
+      const metadata = parseLabelMetadata(stdout.trim());
+      return { pdf: await readFile(outputPath), pageCount: metadata.pageCount };
     });
     const filename = `${new Date().toISOString().slice(0, 10)}-yazili-etiketler.pdf`;
-    const pageCount = countPdfPages(pdf);
-    return new NextResponse(pdf, {
+    return new NextResponse(result.pdf, {
       headers: {
         "content-type": "application/pdf",
         "content-disposition": `attachment; filename="${filename}"`,
-        "x-label-page-count": String(pageCount),
+        "x-label-page-count": String(result.pageCount),
         "x-label-file-name": filename,
       },
     });

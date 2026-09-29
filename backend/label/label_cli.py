@@ -1,6 +1,9 @@
+import json
 import os
 import sys
 from pathlib import Path
+
+import fitz
 
 import etiket_yazdirma as app
 
@@ -36,7 +39,11 @@ def main():
         raise RuntimeError(errors[-1])
     if not Path(output_path).exists():
         raise RuntimeError("Etiket çıktısı oluşturulamadı.")
-    print(output_path)
+
+    with fitz.open(output_path) as output_pdf:
+        page_count = output_pdf.page_count
+
+    print(json.dumps({"outputPath": output_path, "pageCount": page_count}))
 
 
 if __name__ == "__main__":

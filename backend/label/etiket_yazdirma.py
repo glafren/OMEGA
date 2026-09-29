@@ -46,6 +46,20 @@ FONT_OBJECTS = {
 FONT_ARCHIVE = fitz.Archive(WINDOWS_FONT_DIR)
 
 
+def optimize_and_save_pdf(document, output_path):
+    """Fontları küçültüp yinelenen PDF nesnelerini temizleyerek kaydeder."""
+    document.subset_fonts()
+    document.save(
+        output_path,
+        garbage=4,
+        deflate=True,
+        deflate_images=True,
+        deflate_fonts=True,
+        use_objstms=1,
+        compression_effort=100,
+    )
+
+
 def uygulama_klasoru():
     if getattr(sys, "frozen", False):
         return os.path.dirname(sys.executable)
@@ -495,13 +509,13 @@ def main():
         )
 
         if pdf_save_path:
-            dst_pdf.save(pdf_save_path)
+            optimize_and_save_pdf(dst_pdf, pdf_save_path)
         else:
             messagebox.showwarning(
                 "Uyarı",
                 f"PDF kaydedilmedi. Varsayılan olarak '{varsayilan_ad}' ismiyle kaydediliyor."
             )
-            dst_pdf.save(varsayilan_ad)
+            optimize_and_save_pdf(dst_pdf, varsayilan_ad)
 
         messagebox.showinfo("İşlem Tamamlandı", "Etiketler başarıyla güncellendi ve kaydedildi!")
 
