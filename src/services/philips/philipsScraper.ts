@@ -5,6 +5,8 @@ import { isAllowedPhilipsUrl } from "@/lib/validation";
 import type { IkeaProduct, IkeaProductImage, PhilipsFeature } from "@/types";
 import type { ScrapeProgress } from "@/services/ikea/ikeaScraper";
 
+const PHILIPS_IMAGE_SIZE = 1200;
+
 function productCodeFromUrl(input: string) {
   try {
     const segment = new URL(input).pathname.match(/^\/c-p\/([^/]+)/i)?.[1];
@@ -16,7 +18,7 @@ export function canonicalizePhilipsImage(input: string): string | null {
   try {
     const url = new URL(input);
     if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "images.philips.com" || !url.pathname.toLowerCase().startsWith("/is/image/philipsconsumer/")) return null;
-    return `${url.origin}${url.pathname}?$png$&wid=2000&hei=2000&fit=constrain`;
+    return `${url.origin}${url.pathname}?$png$&wid=${PHILIPS_IMAGE_SIZE}&hei=${PHILIPS_IMAGE_SIZE}&fit=constrain`;
   } catch { return null; }
 }
 
@@ -24,7 +26,7 @@ export function canonicalizePhilipsFeatureImage(input: string): string | null {
   try {
     const url = new URL(input);
     if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "images.philips.com" || !url.pathname.toLowerCase().startsWith("/is/image/philipsconsumer/")) return null;
-    return `${url.origin}${url.pathname}?$png$&wid=1416`;
+    return `${url.origin}${url.pathname}?$png$&wid=${PHILIPS_IMAGE_SIZE}`;
   } catch { return null; }
 }
 
@@ -88,7 +90,7 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
     for (const url of urls) {
       const key = new URL(url).pathname.toLowerCase();
       if (seen.has(key)) continue;
-      seen.add(key); images.push({ url, width: 2000, height: 2000, order: images.length });
+      seen.add(key); images.push({ url, width: PHILIPS_IMAGE_SIZE, height: PHILIPS_IMAGE_SIZE, order: images.length });
       if (images.length >= 20) break;
     }
     if (!images.length) throw new AppError("Bu Philips ürünü için görsel bulunamadı.", "NO_IMAGES");
