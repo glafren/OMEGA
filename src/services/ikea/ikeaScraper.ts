@@ -7,7 +7,7 @@ import { deduplicateImageUrls } from "./imageExtractor";
 import { parseProductPage } from "./ikeaParser";
 import { extractProductCode } from "./productCode";
 
-export type ScrapeProgress = (stage: "RESOLVING_PRODUCT" | "OPENING_IKEA_PAGE" | "EXTRACTING_PRODUCT_DATA" | "EXTRACTING_IMAGES", message: string, progress: number) => void;
+export type ScrapeProgress = (stage: "RESOLVING_PRODUCT" | "OPENING_IKEA_PAGE" | "EXTRACTING_PRODUCT_DATA" | "EXTRACTING_IMAGES", message: string, progress: number) => void | Promise<void>;
 
 async function resolveInput(input: string): Promise<string> {
   if (isAllowedIkeaUrl(input)) return input;
@@ -29,12 +29,13 @@ export function extractModelName(fullName?: string): string | null {
 }
 
 export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress): Promise<IkeaProduct> {
-  progress("RESOLVING_PRODUCT", "Ürün adresi çözümleniyor", 10);
+  await progress("RESOLVING_PRODUCT", "Ürün adresi çözümleniyor", 10);
   const sourceUrl = await resolveInput(input);
   if (!isAllowedIkeaUrl(sourceUrl)) throw new AppError("Yalnızca IKEA ürün adreslerine izin verilir.", "URL_NOT_ALLOWED");
-  progress("OPENING_IKEA_PAGE", "IKEA ürün sayfası açılıyor", 18);
-  const browser = await chromium.launch({ headless: true });
+  await progress("OPENING_IKEA_PAGE", "IKEA ürün sayfası açılıyor", 18);
+  let browser;
   try {
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36" });
     const page = await context.newPage();
     page.setDefaultTimeout(appConfig.playwrightTimeout);
@@ -42,19 +43,22 @@ export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress)
     if (!response?.ok()) throw new AppError("IKEA ürün sayfasına ulaşılamadı.", "PAGE_UNAVAILABLE");
     await page.waitForTimeout(1200);
     await page.evaluate(async () => { for (let y = 0; y < Math.min(document.body.scrollHeight, 5000); y += 700) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 80)); } window.scrollTo(0, 0); });
-    progress("EXTRACTING_PRODUCT_DATA", "Ürün bilgileri alınıyor", 28);
+    await progress("EXTRACTING_PRODUCT_DATA", "Ürün bilgileri alınıyor", 28);
     const raw = await parseProductPage(page);
     const finalUrl = page.url();
     const productCode = extractProductCode(raw.code, finalUrl, input);
     const fullName = raw.name?.replace(/\s+/g, " ").trim();
     const modelName = extractModelName(fullName);
     if (!productCode || !modelName) throw new AppError("Ürün bilgileri alınamadı.", "PRODUCT_DATA_MISSING");
-    progress("EXTRACTING_IMAGES", "Ürün görselleri aranıyor", 36);
+    await progress("EXTRACTING_IMAGES", "Ürün görselleri aranıyor", 36);
     const images = deduplicateImageUrls(raw.images).filter((image) => !image.width || image.width >= 300).slice(0, 20);
     if (!images.length) throw new AppError("Bu ürün için görsel bulunamadı.", "NO_IMAGES");
     return { brand: "ikea", productCode, modelName, fullName, sourceUrl: finalUrl, images, description: raw.description, details: raw.details };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
+      throw new AppError("Playwright tarayıcısı bulunamadı. Lütfen uygulamayı kapatıp baslat.bat dosyasını yeniden açın.", "PLAYWRIGHT_BROWSER_MISSING", { cause: error });
+    }
     throw new AppError("IKEA ürün sayfası işlenemedi.", "SCRAPE_FAILED", { cause: error });
-  } finally { await browser.close(); }
+  } finally { await browser?.close(); }
 }

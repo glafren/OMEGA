@@ -45,7 +45,7 @@ export async function runJob(jobId: string) {
     await update("VALIDATING_INPUT", "Girdi doğrulandı", 5);
     const brand = job.brand || "ikea";
     const scraper = brand === "philips" ? scrapePhilipsProduct : scrapeIkeaProduct;
-    const product = await scraper(job.input, (stage, message, progress) => { void update(stage, message, progress); });
+    const product = await scraper(job.input, update);
     job.product = product; await jobStorage.writeJob(job);
     await update("EXTRACTING_IMAGES", `${product.images.length} ürün görseli bulundu`, 42);
     await update("DOWNLOADING_IMAGES", "Görseller indiriliyor", 48);

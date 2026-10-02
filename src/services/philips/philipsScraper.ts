@@ -31,11 +31,12 @@ export function canonicalizePhilipsFeatureImage(input: string): string | null {
 }
 
 export async function scrapePhilipsProduct(input: string, progress: ScrapeProgress): Promise<IkeaProduct> {
-  progress("RESOLVING_PRODUCT", "Philips ürün adresi doğrulanıyor", 10);
+  await progress("RESOLVING_PRODUCT", "Philips ürün adresi doğrulanıyor", 10);
   if (!isAllowedPhilipsUrl(input)) throw new AppError("Geçerli bir Philips Türkiye ürün linki girin.", "INVALID_INPUT");
-  progress("OPENING_IKEA_PAGE", "Philips ürün sayfası açılıyor", 18);
-  const browser = await chromium.launch({ headless: true });
+  await progress("OPENING_IKEA_PAGE", "Philips ürün sayfası açılıyor", 18);
+  let browser;
   try {
+    browser = await chromium.launch({ headless: true });
     const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36" });
     const page = await context.newPage();
     page.setDefaultTimeout(appConfig.playwrightTimeout);
@@ -48,7 +49,7 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
       await expandFeatures.evaluate((button) => (button as HTMLButtonElement).click()).catch(() => undefined);
       await page.waitForFunction(() => document.querySelectorAll('[data-testid="features"] [data-testid="feature-card"]').length > 3, undefined, { timeout: 5_000 }).catch(() => undefined);
     }
-    progress("EXTRACTING_PRODUCT_DATA", "Philips ürün bilgileri alınıyor", 28);
+    await progress("EXTRACTING_PRODUCT_DATA", "Philips ürün bilgileri alınıyor", 28);
     const raw = await page.evaluate(() => {
       type JsonObject = Record<string, unknown>;
       const findProduct = (value: unknown): JsonObject | null => {
@@ -83,7 +84,7 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
     const productCode = raw.code.trim() || productCodeFromUrl(finalUrl) || productCodeFromUrl(input);
     const fullName = raw.name?.replace(/\s+/g, " ").trim();
     if (!productCode || !fullName) throw new AppError("Philips ürün bilgileri alınamadı.", "PRODUCT_DATA_MISSING");
-    progress("EXTRACTING_IMAGES", "Philips ürün görselleri aranıyor", 36);
+    await progress("EXTRACTING_IMAGES", "Philips ürün görselleri aranıyor", 36);
     const urls = [raw.primary, ...raw.gallery].map(canonicalizePhilipsImage).filter((url): url is string => Boolean(url));
     const seen = new Set<string>();
     const images: IkeaProductImage[] = [];
@@ -101,6 +102,9 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
     return { brand: "philips", productCode, modelName: fullName, fullName, sourceUrl: finalUrl, images, features };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
+      throw new AppError("Playwright tarayıcısı bulunamadı. Lütfen uygulamayı kapatıp baslat.bat dosyasını yeniden açın.", "PLAYWRIGHT_BROWSER_MISSING", { cause: error });
+    }
     throw new AppError("Philips ürün sayfası işlenemedi.", "SCRAPE_FAILED", { cause: error });
-  } finally { await browser.close(); }
+  } finally { await browser?.close(); }
 }
