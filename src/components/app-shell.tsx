@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { BadgeDollarSign, ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, Menu, PackageSearch, Settings, Tags, X } from "lucide-react";
+import { BadgeDollarSign, ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, LoaderCircle, Menu, PackageSearch, Power, Settings, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { QueueIndicator } from "@/components/queue-indicator";
@@ -20,6 +20,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
+  const [shuttingDown, setShuttingDown] = useState(false);
+  const [shutdownComplete, setShutdownComplete] = useState(false);
+  const shutdown = async () => {
+    setShuttingDown(true);
+    try {
+      const response = await fetch("/api/system/shutdown", { method: "POST", headers: { "x-omega-shutdown": "1" } });
+      if (!response.ok) throw new Error("Kapatma isteği başarısız oldu.");
+      setShutdownComplete(true);
+      window.close();
+    } catch {
+      setShuttingDown(false);
+      window.alert("Uygulama kapatılamadı. Lütfen komut penceresini kapatın.");
+    }
+  };
   return <div className="min-h-screen bg-[#f4f6fa]">
     <aside className={cn("fixed inset-y-0 left-0 z-40 w-72 border-r border-white/10 bg-[#101c33] text-white transition-[width,transform] duration-300 lg:translate-x-0", collapsed ? "lg:w-20" : "lg:w-72", open ? "translate-x-0" : "-translate-x-full")}>
       <button type="button" onClick={() => setCollapsed((value) => !value)} className="absolute -right-3 top-8 z-10 hidden size-7 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-700 shadow-md transition hover:bg-[#fefeeb] lg:flex" aria-label={collapsed ? "Menüyü genişlet" : "Menüyü daralt"} title={collapsed ? "Menüyü genişlet" : "Menüyü daralt"}>{collapsed ? <ChevronRight className="size-4" /> : <ChevronLeft className="size-4" />}</button>
@@ -39,7 +53,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </Link>;
         })}</nav>
       </div>
-      <div className={cn("absolute inset-x-4 bottom-5", collapsed && "lg:inset-x-2")}><Link href="/settings" onClick={() => setOpen(false)} title={collapsed ? "Medya Ayarları" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition", collapsed && "lg:justify-center lg:px-2", pathname === "/settings" ? "bg-[#fefeeb] text-[#101c33]" : "text-slate-300 hover:bg-white/8 hover:text-white")}><Settings className="size-5 shrink-0" /><span className={cn("whitespace-nowrap", collapsed && "lg:hidden")}>Medya Ayarları</span></Link></div>
+      <div className={cn("absolute inset-x-4 bottom-5 space-y-1.5", collapsed && "lg:inset-x-2")}>
+        <Link href="/settings" onClick={() => setOpen(false)} title={collapsed ? "Medya Ayarları" : undefined} className={cn("flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold transition", collapsed && "lg:justify-center lg:px-2", pathname === "/settings" ? "bg-[#fefeeb] text-[#101c33]" : "text-slate-300 hover:bg-white/8 hover:text-white")}><Settings className="size-5 shrink-0" /><span className={cn("whitespace-nowrap", collapsed && "lg:hidden")}>Medya Ayarları</span></Link>
+        <button type="button" onClick={() => void shutdown()} disabled={shuttingDown} title={collapsed ? "Uygulamayı Kapat" : undefined} className={cn("flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-semibold text-red-300 transition hover:bg-red-500/15 hover:text-red-200 disabled:cursor-wait disabled:opacity-60", collapsed && "lg:justify-center lg:px-2")}>
+          {shuttingDown ? <LoaderCircle className="size-5 shrink-0 animate-spin" /> : <Power className="size-5 shrink-0" />}
+          <span className={cn("whitespace-nowrap", collapsed && "lg:hidden")}>{shuttingDown ? "Kapatılıyor..." : "Uygulamayı Kapat"}</span>
+        </button>
+      </div>
     </aside>
     {open && <button className="fixed inset-0 z-30 bg-slate-950/50 backdrop-blur-sm lg:hidden" onClick={() => setOpen(false)} aria-label="Menüyü kapat" />}
     <div className={cn("transition-[padding] duration-300", collapsed ? "lg:pl-20" : "lg:pl-72")}>
@@ -50,5 +70,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </header>
       {children}
     </div>
+    {shutdownComplete && <div className="fixed inset-0 z-50 grid place-items-center bg-[#101c33] px-6 text-center text-white"><div><Power className="mx-auto size-12 text-red-300" /><h1 className="mt-5 text-2xl font-black">OMEGA kapatıldı</h1><p className="mt-2 text-sm text-slate-300">Tarayıcınız sekmeyi otomatik kapatmadıysa bu sekmeyi kapatabilirsiniz.</p></div></div>}
   </div>;
 }

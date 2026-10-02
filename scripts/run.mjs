@@ -1,10 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:http";
 import path from "node:path";
 
 const mode = process.argv[2] === "start" ? "start" : "dev";
 const root = process.cwd();
 const nextBin = path.join(root, "node_modules", "next", "dist", "bin", "next");
 const children = [];
+let stopping = false;
 
 function commandExists(command, args = ["--version"]) {
   const result = spawnSync(command, args, { cwd: root, stdio: "ignore", shell: false });
@@ -42,6 +45,33 @@ function launch(command, args, extraEnv = {}) {
   return child;
 }
 
+function stop(code = 0) {
+  if (stopping) return;
+  stopping = true;
+  for (const child of children) if (!child.killed) child.kill();
+  process.exit(code);
+}
+
+const shutdownToken = randomBytes(32).toString("hex");
+const controlServer = createServer((request, response) => {
+  const authorized = request.method === "POST" && request.url === "/shutdown" && request.headers.authorization === `Bearer ${shutdownToken}`;
+  if (!authorized) {
+    response.writeHead(404).end();
+    return;
+  }
+
+  response.writeHead(202, { "content-type": "application/json" });
+  response.end(JSON.stringify({ shuttingDown: true }));
+  setTimeout(() => stop(0), 750);
+});
+
+await new Promise((resolve, reject) => {
+  controlServer.once("error", reject);
+  controlServer.listen(0, "127.0.0.1", resolve);
+});
+const controlAddress = controlServer.address();
+if (!controlAddress || typeof controlAddress === "string") throw new Error("Kapatma servisi başlatılamadı.");
+
 const python = resolvePython();
 if (!python) {
   console.error("Python bulunamadi. Python 3.10+ kurun veya PYTHON_EXECUTABLE ortam degiskenini ayarlayin.");
@@ -49,7 +79,10 @@ if (!python) {
 }
 
 const stock = launch(python.command, [...python.args, path.join("backend", "stock", "siparis_app.py")], { OMEGA_STOCK_PORT: "8010" });
-const web = launch(process.execPath, [nextBin, mode, "-p", "3000"]);
+const web = launch(process.execPath, [nextBin, mode, "-p", "3000"], {
+  OMEGA_CONTROL_PORT: String(controlAddress.port),
+  OMEGA_CONTROL_TOKEN: shutdownToken,
+});
 
 if (process.env.OMEGA_OPEN_BROWSER === "1") {
   setTimeout(() => {
@@ -58,11 +91,6 @@ if (process.env.OMEGA_OPEN_BROWSER === "1") {
       browser.unref();
     }
   }, 1500);
-}
-
-function stop(code = 0) {
-  for (const child of children) if (!child.killed) child.kill();
-  process.exit(code);
 }
 
 stock.on("exit", (code) => {
