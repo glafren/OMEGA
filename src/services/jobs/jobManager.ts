@@ -19,6 +19,11 @@ import { createIkeaRichContent, countRichContentBlocks } from "@/services/ikea/r
 import { generateIkeaRichContentCopy } from "@/services/openai/richContentCopy";
 
 const brandingDir = path.join(process.cwd(), "public", "branding");
+const abortError = () => new DOMException("İşlem durduruldu.", "AbortError");
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw abortError();
+}
 
 async function createZip(outputDir: string, zipPath: string) {
   await new Promise<void>((resolve, reject) => {
@@ -35,28 +40,38 @@ export async function createJob(input: string, brand: ProductBrand = "ikea"): Pr
   await jobStorage.createJob(job); return job;
 }
 
-export async function runJob(jobId: string) {
+export async function runJob(jobId: string, signal?: AbortSignal) {
   let job = await jobStorage.readJob(jobId); if (!job) return;
   const update = async (stage: JobStage, message: string, progress: number) => {
     job = { ...job!, status: stage === "COMPLETED" ? "completed" : stage === "ERROR" ? "failed" : "processing", stage, message, progress, updatedAt: new Date().toISOString() };
     await jobStorage.writeJob(job); const event: JobEvent = { jobId, stage, message, progress, timestamp: job.updatedAt }; emitJobEvent(event);
   };
+  const cancel = async () => {
+    job = { ...job!, status: "canceled", stage: "ERROR", message: "İşlem durduruldu.", progress: job!.progress, updatedAt: new Date().toISOString(), error: "CANCELED" };
+    await jobStorage.writeJob(job);
+    emitJobEvent({ jobId, stage: "ERROR", message: job.message, progress: job.progress, timestamp: job.updatedAt });
+  };
   try {
+    throwIfAborted(signal);
     await update("VALIDATING_INPUT", "Girdi doğrulandı", 5);
     const brand = job.brand || "ikea";
     const scraper = brand === "philips" ? scrapePhilipsProduct : scrapeIkeaProduct;
-    const product = await scraper(job.input, update);
+    const product = await scraper(job.input, update, signal);
+    throwIfAborted(signal);
     job.product = product; await jobStorage.writeJob(job);
     await update("EXTRACTING_IMAGES", `${product.images.length} ürün görseli bulundu`, 42);
     await update("DOWNLOADING_IMAGES", "Görseller indiriliyor", 48);
-    const paths = jobStorage.paths(jobId); const downloaded = await downloadImages(product.images.map((image) => image.url), paths.source);
+    const paths = jobStorage.paths(jobId); const downloaded = await downloadImages(product.images.map((image) => image.url), paths.source, signal);
+    throwIfAborted(signal);
     const prefix = brand === "philips" ? product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase() : codeDigits(product.productCode); const outputs: OutputImage[] = [];
     await update("PROCESSING_COVER", "Kapak görseli hazırlanıyor", 62);
     const coverName = `${prefix}_01.jpg`; const settings = await readSettings();
     await generateCover(downloaded[0], path.join(paths.output, coverName), product.modelName, product.productCode, brandingDir, settingsToTemplate(settings), settings.jpegQuality, brand);
+    throwIfAborted(signal);
     outputs.push({ id: "01", filename: coverName, width: 750, height: 1000, isCover: true });
     await update("PROCESSING_GALLERY", "Galeri görselleri hazırlanıyor", 70);
     for (let index = 1; index < downloaded.length; index++) {
+      throwIfAborted(signal);
       const id = String(index + 1).padStart(2, "0"); const filename = `${prefix}_${id}.jpg`;
       await generateGalleryImage(downloaded[index], path.join(paths.output, filename), settings.backgroundColor, settings.jpegQuality); outputs.push({ id, filename, width: 750, height: 1000, isCover: false });
       await update("PROCESSING_GALLERY", `${index + 1}/${downloaded.length} görsel hazırlandı`, 70 + Math.round(((index + 1) / downloaded.length) * 17));
@@ -64,7 +79,8 @@ export async function runJob(jobId: string) {
     job.outputs = outputs; await jobStorage.writeJob(job);
     await update("CREATING_VIDEO", `${settings.videoDurationSeconds} saniyelik ürün videosu hazırlanıyor`, 90);
     const videoName = `${prefix}_video.mp4`;
-    await createProductVideo(outputs.map((output) => path.join(paths.output, output.filename)), path.join(paths.output, videoName), settings.videoDurationSeconds);
+    await createProductVideo(outputs.map((output) => path.join(paths.output, output.filename)), path.join(paths.output, videoName), settings.videoDurationSeconds, signal);
+    throwIfAborted(signal);
     job.video = { filename: videoName, width: 750, height: 1000, durationSeconds: settings.videoDurationSeconds }; await jobStorage.writeJob(job);
     await update("CREATING_RICH_CONTENT", "Rusça Ozon Rich Content hazırlanıyor", 95);
     let modelUsage: Pick<NonNullable<JobRecord["richContent"]>, "model" | "inputTokens" | "outputTokens" | "totalTokens"> = {};
@@ -82,9 +98,23 @@ export async function runJob(jobId: string) {
     job.richContent = { filename, blockCount, language: "ru", ...modelUsage };
     await jobStorage.writeJob(job);
     await update("CREATING_ZIP", "Medya ZIP arşivi oluşturuluyor", 98); await createZip(paths.output, paths.zip);
+    throwIfAborted(signal);
     await update("COMPLETED", `${outputs.length} görsel, video${job.richContent ? " ve Rich Content JSON" : ""} başarıyla oluşturuldu`, 100);
   } catch (error) {
     console.error(`[job:${jobId}]`, error);
+    if (error instanceof DOMException && error.name === "AbortError") {
+      await cancel();
+      return;
+    }
     const message = friendlyError(error); job.error = error instanceof AppError ? error.code : "UNEXPECTED"; await update("ERROR", message, job.progress);
   }
+}
+
+export async function cancelJob(jobId: string) {
+  const job = await jobStorage.readJob(jobId);
+  if (!job || job.status === "completed" || job.status === "failed" || job.status === "canceled") return job;
+  const updated: JobRecord = { ...job, status: "canceled", stage: "ERROR", message: "İşlem durduruldu.", error: "CANCELED", updatedAt: new Date().toISOString() };
+  await jobStorage.writeJob(updated);
+  emitJobEvent({ jobId, stage: "ERROR", message: updated.message, progress: updated.progress, timestamp: updated.updatedAt });
+  return updated;
 }

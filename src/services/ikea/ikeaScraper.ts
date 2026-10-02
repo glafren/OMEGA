@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import type { Browser } from "playwright";
 import { appConfig } from "@/config/app-config";
 import { AppError } from "@/lib/errors";
 import { isAllowedIkeaUrl, normalizeProductCode } from "@/lib/validation";
@@ -28,20 +29,24 @@ export function extractModelName(fullName?: string): string | null {
   return tokens[0] || null;
 }
 
-export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress): Promise<IkeaProduct> {
+export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress, signal?: AbortSignal): Promise<IkeaProduct> {
   await progress("RESOLVING_PRODUCT", "Ürün adresi çözümleniyor", 10);
+  if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
   const sourceUrl = await resolveInput(input);
   if (!isAllowedIkeaUrl(sourceUrl)) throw new AppError("Yalnızca IKEA ürün adreslerine izin verilir.", "URL_NOT_ALLOWED");
   await progress("OPENING_IKEA_PAGE", "IKEA ürün sayfası açılıyor", 18);
-  let browser;
+  let browser: Browser | undefined;
+  const abort = () => { void browser?.close().catch(() => undefined); };
   try {
     browser = await chromium.launch({ headless: true });
+    signal?.addEventListener("abort", abort, { once: true });
     const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36" });
     const page = await context.newPage();
     page.setDefaultTimeout(appConfig.playwrightTimeout);
     const response = await page.goto(sourceUrl, { waitUntil: "domcontentloaded", timeout: appConfig.playwrightTimeout });
     if (!response?.ok()) throw new AppError("IKEA ürün sayfasına ulaşılamadı.", "PAGE_UNAVAILABLE");
     await page.waitForTimeout(1200);
+    if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
     await page.evaluate(async () => { for (let y = 0; y < Math.min(document.body.scrollHeight, 5000); y += 700) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 80)); } window.scrollTo(0, 0); });
     await progress("EXTRACTING_PRODUCT_DATA", "Ürün bilgileri alınıyor", 28);
     const raw = await parseProductPage(page);
@@ -56,9 +61,10 @@ export async function scrapeIkeaProduct(input: string, progress: ScrapeProgress)
     return { brand: "ikea", productCode, modelName, fullName, sourceUrl: finalUrl, images, description: raw.description, details: raw.details };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
     if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
       throw new AppError("Playwright tarayıcısı bulunamadı. Lütfen uygulamayı kapatıp baslat.bat dosyasını yeniden açın.", "PLAYWRIGHT_BROWSER_MISSING", { cause: error });
     }
     throw new AppError("IKEA ürün sayfası işlenemedi.", "SCRAPE_FAILED", { cause: error });
-  } finally { await browser?.close(); }
+  } finally { signal?.removeEventListener("abort", abort); await browser?.close(); }
 }

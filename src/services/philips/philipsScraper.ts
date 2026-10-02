@@ -1,4 +1,5 @@
 import { chromium } from "playwright";
+import type { Browser } from "playwright";
 import { appConfig } from "@/config/app-config";
 import { AppError } from "@/lib/errors";
 import { isAllowedPhilipsUrl } from "@/lib/validation";
@@ -30,19 +31,22 @@ export function canonicalizePhilipsFeatureImage(input: string): string | null {
   } catch { return null; }
 }
 
-export async function scrapePhilipsProduct(input: string, progress: ScrapeProgress): Promise<IkeaProduct> {
+export async function scrapePhilipsProduct(input: string, progress: ScrapeProgress, signal?: AbortSignal): Promise<IkeaProduct> {
   await progress("RESOLVING_PRODUCT", "Philips ürün adresi doğrulanıyor", 10);
   if (!isAllowedPhilipsUrl(input)) throw new AppError("Geçerli bir Philips Türkiye ürün linki girin.", "INVALID_INPUT");
   await progress("OPENING_IKEA_PAGE", "Philips ürün sayfası açılıyor", 18);
-  let browser;
+  let browser: Browser | undefined;
+  const abort = () => { void browser?.close().catch(() => undefined); };
   try {
     browser = await chromium.launch({ headless: true });
+    signal?.addEventListener("abort", abort, { once: true });
     const context = await browser.newContext({ userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131 Safari/537.36" });
     const page = await context.newPage();
     page.setDefaultTimeout(appConfig.playwrightTimeout);
     const response = await page.goto(input, { waitUntil: "domcontentloaded", timeout: appConfig.playwrightTimeout });
     if (!response?.ok() || !isAllowedPhilipsUrl(page.url())) throw new AppError("Philips ürün sayfasına ulaşılamadı.", "PAGE_UNAVAILABLE");
     await page.waitForTimeout(1500);
+    if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
     await page.locator("#onetrust-reject-all-handler").click({ timeout: 2_000 }).catch(() => undefined);
     const expandFeatures = page.getByRole("button", { name: /Daha fazla göster/i }).first();
     if (await expandFeatures.count()) {
@@ -102,9 +106,10 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
     return { brand: "philips", productCode, modelName: fullName, fullName, sourceUrl: finalUrl, images, features };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
     if (error instanceof Error && error.message.includes("Executable doesn't exist")) {
       throw new AppError("Playwright tarayıcısı bulunamadı. Lütfen uygulamayı kapatıp baslat.bat dosyasını yeniden açın.", "PLAYWRIGHT_BROWSER_MISSING", { cause: error });
     }
     throw new AppError("Philips ürün sayfası işlenemedi.", "SCRAPE_FAILED", { cause: error });
-  } finally { await browser?.close(); }
+  } finally { signal?.removeEventListener("abort", abort); await browser?.close(); }
 }

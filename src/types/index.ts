@@ -4,7 +4,7 @@ export type JobStage =
   | "PROCESSING_COVER" | "PROCESSING_GALLERY" | "CREATING_VIDEO" | "CREATING_RICH_CONTENT"
   | "CREATING_ZIP" | "COMPLETED" | "ERROR";
 
-export type JobStatus = "queued" | "processing" | "completed" | "failed";
+export type JobStatus = "queued" | "processing" | "completed" | "failed" | "canceled";
 export type ProductBrand = "ikea" | "philips";
 
 export interface IkeaProductImage { url: string; width?: number; height?: number; order: number }

@@ -22,6 +22,7 @@ interface PendingWork<T> {
 
 export class WorkQueue {
   private readonly pending: PendingWork<unknown>[] = [];
+  private readonly active = new Map<string, PendingWork<unknown>>();
   private readonly items = new Map<string, QueueWorkItem>();
   private running = 0;
 
@@ -61,14 +62,36 @@ export class WorkQueue {
     return { concurrency: this.concurrency, running: this.running, queued: items.filter((item) => item.status === "queued").length, items };
   }
 
+  cancel(id: string) {
+    const item = this.items.get(id);
+    if (!item) return false;
+    const pending = this.pending.find((work) => work.item.id === id);
+    if (pending) {
+      pending.controller.abort();
+      const index = this.pending.indexOf(pending);
+      if (index >= 0) this.pending.splice(index, 1);
+      this.items.delete(id);
+      pending.reject(abortError());
+      return true;
+    }
+    if (item.status === "running") {
+      const running = this.active.get(id);
+      running?.controller.abort();
+      return true;
+    }
+    return false;
+  }
+
   private drain() {
     while (this.running < this.concurrency && this.pending.length > 0) {
       const work = this.pending.shift()!;
       work.item.status = "running";
       work.item.startedAt = new Date().toISOString();
+      this.active.set(work.item.id, work);
       this.running += 1;
       void work.task(work.controller.signal).then(work.resolve, work.reject).finally(() => {
         if (work.abortListener) work.upstreamSignal?.removeEventListener("abort", work.abortListener);
+        this.active.delete(work.item.id);
         this.running -= 1;
         this.items.delete(work.item.id);
         this.drain();
@@ -83,4 +106,7 @@ function abortError() {
 
 const queueCapacity = Math.max(1, Number.parseInt(process.env.OMEGA_QUEUE_CONCURRENCY || "2", 10) || 2);
 const globalQueue = globalThis as typeof globalThis & { __omegaWorkQueue?: WorkQueue };
-export const workQueue = globalQueue.__omegaWorkQueue ??= new WorkQueue(queueCapacity);
+const existingQueue = globalQueue.__omegaWorkQueue as (WorkQueue & { cancel?: (id: string) => boolean }) | undefined;
+export const workQueue = existingQueue && typeof existingQueue.cancel === "function"
+  ? existingQueue
+  : (globalQueue.__omegaWorkQueue = new WorkQueue(queueCapacity));

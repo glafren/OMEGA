@@ -34,8 +34,9 @@ function buildFilter(imageCount: number, slideDuration: number, totalDurationSec
   return [...inputs, ...transitions].join(";");
 }
 
-export async function createProductVideo(imagePaths: string[], outputPath: string, totalDurationSeconds: number) {
+export async function createProductVideo(imagePaths: string[], outputPath: string, totalDurationSeconds: number, signal?: AbortSignal) {
   if (!ffmpegPath) throw new Error("FFmpeg çalıştırılabilir dosyası bulunamadı.");
+  if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
   const slideDuration = calculateSlideDuration(imagePaths.length, totalDurationSeconds);
   const args = ["-y", "-nostdin", "-hide_banner", "-loglevel", "error"];
   for (const imagePath of imagePaths) args.push("-loop", "1", "-t", slideDuration.toFixed(3), "-i", imagePath);
@@ -45,5 +46,5 @@ export async function createProductVideo(imagePaths: string[], outputPath: strin
     "-c:v", "libx264", "-preset", "medium", "-crf", "22",
     "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-an", outputPath,
   );
-  await execFileAsync(ffmpegPath, args, { windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+  await execFileAsync(ffmpegPath, args, { windowsHide: true, maxBuffer: 2 * 1024 * 1024, signal });
 }

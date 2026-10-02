@@ -4,8 +4,9 @@ import path from "node:path";
 import { appConfig } from "@/config/app-config";
 import { AppError } from "@/lib/errors";
 
-async function downloadOne(url: string, destination: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(30_000), headers: { "user-agent": "Mozilla/5.0 OMEGA-Operations/1.0", accept: "image/avif,image/webp,image/*" } });
+async function downloadOne(url: string, destination: string, signal?: AbortSignal) {
+  const timeout = AbortSignal.timeout(30_000);
+  const response = await fetch(url, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout, headers: { "user-agent": "Mozilla/5.0 OMEGA-Operations/1.0", accept: "image/avif,image/webp,image/*" } });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const type = response.headers.get("content-type") || "";
   if (!type.startsWith("image/")) throw new Error("Yanıt görsel değil");
@@ -17,14 +18,15 @@ async function downloadOne(url: string, destination: string) {
   return createHash("sha256").update(buffer).digest("hex");
 }
 
-export async function downloadImages(urls: string[], sourceDir: string): Promise<string[]> {
+export async function downloadImages(urls: string[], sourceDir: string, signal?: AbortSignal): Promise<string[]> {
   const output: Array<string | undefined> = new Array(urls.length);
   let cursor = 0;
   const worker = async () => {
     while (cursor < urls.length) {
+      if (signal?.aborted) throw new DOMException("İşlem durduruldu.", "AbortError");
       const index = cursor++;
       const destination = path.join(sourceDir, `${String(index + 1).padStart(2, "0")}.source`);
-      try { await downloadOne(urls[index], destination); output[index] = destination; } catch (error) { console.error(`[image:${index}]`, error); }
+      try { await downloadOne(urls[index], destination, signal); output[index] = destination; } catch (error) { if (signal?.aborted) throw error; console.error(`[image:${index}]`, error); }
     }
   };
   await Promise.all(Array.from({ length: Math.min(appConfig.maxConcurrentDownloads, urls.length) }, worker));
