@@ -1,5 +1,7 @@
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import path from "node:path";
+import { chromium } from "playwright";
 
 const root = process.cwd();
 
@@ -35,13 +37,22 @@ function run(command, args) {
   }
 }
 
+function succeeds(command, args) {
+  return spawnSync(command, args, { cwd: root, stdio: "ignore", shell: false }).status === 0;
+}
+
 const python = resolvePython();
 if (!python) {
   console.error("Python bulunamadi. Python 3.10+ kurun veya PYTHON_EXECUTABLE ortam degiskenini ayarlayin.");
   process.exit(1);
 }
 
-run(python.command, [...python.args, "-m", "pip", "install", "-r", "requirements.txt"]);
+if (!succeeds(python.command, [...python.args, "-c", "import requests, openpyxl, reportlab, fitz, pandas"])) {
+  run(python.command, [...python.args, "-m", "pip", "install", "-r", "requirements.txt"]);
+}
 
 const playwrightCli = path.join(root, "node_modules", "playwright", "cli.js");
-run(process.execPath, [playwrightCli, "install", "chromium"]);
+const chromiumPath = chromium.executablePath();
+if (!existsSync(chromiumPath)) {
+  run(process.execPath, [playwrightCli, "install", "chromium"]);
+}

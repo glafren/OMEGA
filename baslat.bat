@@ -2,12 +2,12 @@
 setlocal
 cd /d "%~dp0"
 
-call :addPathIfExists "%ProgramFiles%\nodejs"
-call :addPathIfExists "%LocalAppData%\Programs\nodejs"
-call :addPathIfExists "%LocalAppData%\Programs\Python\Python313"
-call :addPathIfExists "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin"
-call :addPathIfExists "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback"
-call :addPathIfExists "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python"
+if exist "%ProgramFiles%\nodejs" set "PATH=%ProgramFiles%\nodejs;%PATH%"
+if exist "%LocalAppData%\Programs\nodejs" set "PATH=%LocalAppData%\Programs\nodejs;%PATH%"
+if exist "%LocalAppData%\Programs\Python\Python313" set "PATH=%LocalAppData%\Programs\Python\Python313;%PATH%"
+if exist "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin" set "PATH=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin;%PATH%"
+if exist "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback" set "PATH=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\bin\fallback;%PATH%"
+if exist "%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python" set "PATH=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python;%PATH%"
 
 if not defined PYTHON_EXECUTABLE (
   if exist "%LocalAppData%\Programs\Python\Python313\python.exe" (
@@ -47,8 +47,9 @@ if not errorlevel 1 (
 if not exist node_modules (
   echo Ilk kurulum yapiliyor...
   call %PKG% install || goto :error
-  call %PKG% run setup || goto :error
 )
+echo Gereksinimler kontrol ediliyor...
+call node scripts/setup.mjs || goto :error
 if defined PYTHON_EXECUTABLE (
   call "%PYTHON_EXECUTABLE%" -c "import requests, openpyxl, reportlab, fitz, pandas" >nul 2>nul
   if errorlevel 1 (
@@ -67,7 +68,3 @@ exit /b 0
 echo Kurulum tamamlanamadi.
 pause
 exit /b 1
-
-:addPathIfExists
-if exist "%~1" set "PATH=%~1;%PATH%"
-exit /b 0

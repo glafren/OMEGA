@@ -13,9 +13,10 @@ const latestJobKey = "omega-latest-media-job";
 export function Dashboard() {
   const [job, setJob] = useState<JobRecord | null>(null); const [event, setEvent] = useState<JobEvent | null>(null); const [starting, setStarting] = useState(false); const [canceling, setCanceling] = useState(false);
   const loadJob = useCallback(async (jobId: string) => { const response = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" }); if (!response.ok) throw new Error("İş bilgisi alınamadı."); const data = await response.json() as JobRecord; setJob(data); setEvent({ jobId, stage: data.stage, message: data.message, progress: data.progress, timestamp: data.updatedAt }); return data; }, []);
-  // Restores server-backed state after hydration; the update necessarily originates from this effect.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { const jobId = localStorage.getItem(latestJobKey) || localStorage.getItem("ikea-ozon-latest-job"); if (jobId) void loadJob(jobId).then(() => localStorage.setItem(latestJobKey, jobId)).catch(() => { localStorage.removeItem(latestJobKey); localStorage.removeItem("ikea-ozon-latest-job"); }); }, [loadJob]);
+  useEffect(() => {
+    localStorage.removeItem(latestJobKey);
+    localStorage.removeItem("ikea-ozon-latest-job");
+  }, []);
   useEffect(() => {
     if (!job || job.status === "completed" || job.status === "failed" || job.status === "canceled") return;
     const source = new EventSource(`/api/jobs/${job.jobId}/events`);
