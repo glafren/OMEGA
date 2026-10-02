@@ -1,11 +1,11 @@
 @echo off
 cd /d "%~dp0"
-where npm >nul 2>nul
-if %errorlevel%==0 (
+where.exe npm >nul 2>nul
+if not errorlevel 1 (
   set PKG=npm
 ) else (
-  where pnpm >nul 2>nul
-  if %errorlevel%==0 (
+  where.exe pnpm >nul 2>nul
+  if not errorlevel 1 (
     set PKG=pnpm
   ) else (
     echo npm veya pnpm bulunamadi. Node.js 20.9+ kurun.
