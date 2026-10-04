@@ -2,6 +2,13 @@ import { AppError } from "@/lib/errors";
 import type { PhilipsFeature } from "@/types";
 
 type Translator = (text: string) => Promise<string>;
+type FeatureTranslation = { title: string; text: string };
+type ResponsesBody = {
+  status?: string;
+  output_text?: string;
+  output?: Array<{ content?: Array<{ text?: string }> }>;
+  error?: { code?: string; message?: string };
+};
 
 const sampleTranslations = new Map<string, string>([
   ["Tüm bakım ihtiyaçlarınız için 9 başlık", "9 насадок для всех ваших потребностей по уходу"],
@@ -36,30 +43,94 @@ function normalizeText(value: string) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-export async function translateToRussian(text: string): Promise<string> {
-  const normalized = normalizeText(text);
-  const known = sampleTranslations.get(normalized);
-  if (known) return known;
-  const url = new URL("https://api.mymemory.translated.net/get");
-  url.searchParams.set("q", normalized);
-  url.searchParams.set("langpair", "tr|ru");
+function readOutputText(body: ResponsesBody) {
+  if (body.output_text) return body.output_text;
+  return body.output?.flatMap((item) => item.content || []).map((item) => item.text || "").join("") || "";
+}
+
+function validateTranslations(value: unknown, expectedCount: number): FeatureTranslation[] {
+  if (!value || typeof value !== "object") throw new Error("OpenAI geçersiz çeviri yanıtı döndürdü.");
+  const translations = (value as { translations?: unknown }).translations;
+  if (!Array.isArray(translations) || translations.length !== expectedCount) throw new Error("OpenAI eksik çeviri döndürdü.");
+  return translations.map((translation) => {
+    if (!translation || typeof translation !== "object") throw new Error("OpenAI geçersiz çeviri kartı döndürdü.");
+    const title = normalizeText(String((translation as FeatureTranslation).title || ""));
+    const text = normalizeText(String((translation as FeatureTranslation).text || ""));
+    if (!/[\u0400-\u04ff]/u.test(title) || !/[\u0400-\u04ff]/u.test(text)) throw new Error("OpenAI yanıtı Rusça değil.");
+    return { title, text };
+  });
+}
+
+export async function translateFeaturesToRussian(features: PhilipsFeature[]): Promise<FeatureTranslation[]> {
+  const known = features.map((feature) => ({ title: sampleTranslations.get(normalizeText(feature.title)), text: sampleTranslations.get(normalizeText(feature.text)) }));
+  if (known.every((translation) => translation.title && translation.text)) return known as FeatureTranslation[];
+
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new AppError("OpenAI API anahtarı yapılandırılmamış.", "OPENAI_KEY_MISSING");
+  const model = process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-6-luna";
   try {
-    const response = await fetch(url, { headers: { Accept: "application/json", "User-Agent": "OMEGA/1.0" }, signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) throw new Error(`Çeviri servisi HTTP ${response.status}`);
-    const body = await response.json() as { responseData?: { translatedText?: string } };
-    const translated = normalizeText(body.responseData?.translatedText || "");
-    if (!translated || !/[\u0400-\u04ff]/u.test(translated)) throw new Error("Geçersiz çeviri yanıtı");
-    return translated;
+    const response = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(45_000),
+      body: JSON.stringify({
+        model,
+        reasoning: { effort: "none" },
+        store: false,
+        instructions: "Türkçe Philips ürün özelliklerini doğal ve doğru Rusçaya çevir. Yalnızca kaynak metindeki bilgileri koru; yeni özellik, iddia veya pazarlama ifadesi ekleme. Her kartı ve sırasını birebir koru. Tüm title ve text değerleri Kiril alfabesiyle Rusça olmalı.",
+        input: JSON.stringify(features.map(({ title, text }) => ({ title, text }))),
+        text: {
+          format: {
+            type: "json_schema",
+            name: "philips_feature_translations",
+            strict: true,
+            schema: {
+              type: "object",
+              properties: {
+                translations: {
+                  type: "array",
+                  minItems: features.length,
+                  maxItems: features.length,
+                  items: {
+                    type: "object",
+                    properties: { title: { type: "string" }, text: { type: "string" } },
+                    required: ["title", "text"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["translations"],
+              additionalProperties: false,
+            },
+          },
+        },
+        max_output_tokens: 4_000,
+      }),
+    });
+    const body = await response.json() as ResponsesBody;
+    if (!response.ok) throw new Error(`${response.status} ${body.error?.code || ""} ${body.error?.message || ""}`.trim());
+    if (body.status && body.status !== "completed") throw new Error(`OpenAI yanıtı tamamlanmadı: ${body.status}`);
+    return validateTranslations(JSON.parse(readOutputText(body)), features.length);
   } catch (error) {
-    throw new AppError("Rich Content için Rusça çeviri oluşturulamadı.", "TRANSLATION_FAILED", { cause: error });
+    if (error instanceof AppError) throw error;
+    throw new AppError("Rich Content için Rusça çeviri OpenAI ile oluşturulamadı.", "TRANSLATION_FAILED", { cause: error });
   }
 }
 
-export async function createPhilipsRichContent(features: PhilipsFeature[], translator: Translator = translateToRussian) {
+export async function translateToRussian(text: string): Promise<string> {
+  const known = sampleTranslations.get(normalizeText(text));
+  if (known) return known;
+  return (await translateFeaturesToRussian([{ imageUrl: "", title: text, text }]))[0].title;
+}
+
+export async function createPhilipsRichContent(features: PhilipsFeature[], translator?: Translator) {
   if (!features.length) throw new AppError("Philips özellik kartları bulunamadı.", "RICH_CONTENT_MISSING");
+  const translations = translator
+    ? await Promise.all(features.map(async (feature) => { const [title, text] = await Promise.all([translator(feature.title), translator(feature.text)]); return { title, text }; }))
+    : await translateFeaturesToRussian(features);
   const blocks = [];
-  for (const feature of features) {
-    const [title, text] = await Promise.all([translator(feature.title), translator(feature.text)]);
+  for (const [index, feature] of features.entries()) {
+    const { title, text } = translations[index];
     blocks.push({
       img: { src: feature.imageUrl, srcMobile: feature.imageUrl, alt: "", position: "to_the_edge", positionMobile: "to_the_edge", widthMobile: 400, heightMobile: 225 },
       imgLink: "",

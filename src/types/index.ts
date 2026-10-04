@@ -23,5 +23,6 @@ export interface JobEvent { jobId: string; stage: JobStage; message: string; pro
 export interface JobRecord {
   jobId: string; input: string; brand?: ProductBrand; status: JobStatus; stage: JobStage; progress: number;
   message: string; createdAt: string; updatedAt: string; product?: IkeaProduct;
-  outputs: OutputImage[]; video?: OutputVideo; richContent?: OutputRichContent; error?: string;
+  outputs: OutputImage[]; video?: OutputVideo; richContent?: OutputRichContent;
+  richContentStatus?: "processing" | "completed" | "failed"; richContentError?: string; error?: string;
 }

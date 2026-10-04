@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import archiver from "archiver";
 import { AppError, friendlyError } from "@/lib/errors";
-import type { JobEvent, JobRecord, JobStage, OutputImage, ProductBrand } from "@/types";
+import type { IkeaProduct, JobEvent, JobRecord, JobStage, OutputImage, ProductBrand } from "@/types";
 import { scrapeIkeaProduct } from "@/services/ikea/ikeaScraper";
 import { scrapePhilipsProduct } from "@/services/philips/philipsScraper";
 import { codeDigits } from "@/services/ikea/productCode";
@@ -31,6 +31,16 @@ async function createZip(outputDir: string, zipPath: string) {
     output.on("close", resolve); output.on("error", reject); archive.on("error", reject);
     archive.pipe(output); archive.directory(outputDir, false); void archive.finalize();
   });
+}
+
+async function generateRichContent(product: IkeaProduct) {
+  if (product.brand === "philips") {
+    const content = await createPhilipsRichContent(product.features || []);
+    return { content, blockCount: product.features?.length || 0, modelUsage: {} };
+  }
+  const generated = await generateIkeaRichContentCopy(product);
+  const content = createIkeaRichContent(product, generated.copy);
+  return { content, blockCount: countRichContentBlocks(content), modelUsage: { model: generated.model, ...generated.usage } };
 }
 
 export async function createJob(input: string, brand: ProductBrand = "ikea"): Promise<JobRecord> {
@@ -83,23 +93,20 @@ export async function runJob(jobId: string, signal?: AbortSignal) {
     throwIfAborted(signal);
     job.video = { filename: videoName, width: 750, height: 1000, durationSeconds: settings.videoDurationSeconds }; await jobStorage.writeJob(job);
     await update("CREATING_RICH_CONTENT", "Rusça Ozon Rich Content hazırlanıyor", 95);
-    let modelUsage: Pick<NonNullable<JobRecord["richContent"]>, "model" | "inputTokens" | "outputTokens" | "totalTokens"> = {};
-    let richContent;
-    if (brand === "philips") {
-      richContent = await createPhilipsRichContent(product.features || []);
-    } else {
-      const generated = await generateIkeaRichContentCopy(product);
-      richContent = createIkeaRichContent(product, generated.copy);
-      modelUsage = { model: generated.model, ...generated.usage };
+    job.richContentStatus = "processing"; job.richContentError = undefined; await jobStorage.writeJob(job);
+    try {
+      const generated = await generateRichContent(product);
+      const filename = `${prefix}_rich-content.json`;
+      await writeFile(path.join(paths.output, filename), JSON.stringify(generated.content, null, 2), "utf8");
+      job.richContent = { filename, blockCount: generated.blockCount, language: "ru", ...generated.modelUsage };
+      job.richContentStatus = "completed"; job.richContentError = undefined; await jobStorage.writeJob(job);
+    } catch (error) {
+      console.error(`[job:${jobId}:rich-content]`, error);
+      job.richContentStatus = "failed"; job.richContentError = friendlyError(error); await jobStorage.writeJob(job);
     }
-    const filename = `${prefix}_rich-content.json`;
-    await writeFile(path.join(paths.output, filename), JSON.stringify(richContent, null, 2), "utf8");
-    const blockCount = brand === "philips" ? product.features?.length || 0 : countRichContentBlocks(richContent);
-    job.richContent = { filename, blockCount, language: "ru", ...modelUsage };
-    await jobStorage.writeJob(job);
     await update("CREATING_ZIP", "Medya ZIP arşivi oluşturuluyor", 98); await createZip(paths.output, paths.zip);
     throwIfAborted(signal);
-    await update("COMPLETED", `${outputs.length} görsel, video${job.richContent ? " ve Rich Content JSON" : ""} başarıyla oluşturuldu`, 100);
+    await update("COMPLETED", `${outputs.length} görsel ve video başarıyla oluşturuldu${job.richContent ? "; Rich Content JSON hazır" : job.richContentStatus === "failed" ? "; Rich Content tekrar denenebilir" : ""}`, 100);
   } catch (error) {
     console.error(`[job:${jobId}]`, error);
     if (error instanceof DOMException && error.name === "AbortError") {
@@ -107,6 +114,44 @@ export async function runJob(jobId: string, signal?: AbortSignal) {
       return;
     }
     const message = friendlyError(error); job.error = error instanceof AppError ? error.code : "UNEXPECTED"; await update("ERROR", message, job.progress);
+  }
+}
+
+export async function retryRichContent(jobId: string) {
+  let job = await jobStorage.readJob(jobId);
+  if (!job) throw new AppError("İş bulunamadı.", "JOB_NOT_FOUND");
+  if (!job.product || !job.outputs.length) throw new AppError("Rich Content için hazırlanmış ürün verisi bulunamadı.", "RICH_CONTENT_RETRY_UNAVAILABLE");
+  if (job.richContentStatus === "processing") throw new AppError("Rich Content zaten hazırlanıyor.", "RICH_CONTENT_IN_PROGRESS");
+  const product = job.product;
+
+  job = { ...job, richContentStatus: "processing", richContentError: undefined, updatedAt: new Date().toISOString() };
+  await jobStorage.writeJob(job);
+  try {
+    const generated = await generateRichContent(product);
+    const prefix = product.brand === "philips" ? product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase() : codeDigits(product.productCode);
+    const filename = `${prefix}_rich-content.json`;
+    const paths = jobStorage.paths(jobId);
+    await writeFile(path.join(paths.output, filename), JSON.stringify(generated.content, null, 2), "utf8");
+    await createZip(paths.output, paths.zip);
+    const recovered = job.status === "failed" && job.error === "TRANSLATION_FAILED";
+    job = {
+      ...job,
+      status: recovered ? "completed" : job.status,
+      stage: recovered ? "COMPLETED" : job.stage,
+      progress: recovered ? 100 : job.progress,
+      message: recovered ? `${job.outputs.length} görsel, video ve Rich Content JSON başarıyla oluşturuldu` : job.message,
+      richContent: { filename, blockCount: generated.blockCount, language: "ru", ...generated.modelUsage },
+      richContentStatus: "completed",
+      richContentError: undefined,
+      error: recovered ? undefined : job.error,
+      updatedAt: new Date().toISOString(),
+    };
+    await jobStorage.writeJob(job);
+    return job;
+  } catch (error) {
+    job = { ...job, richContentStatus: "failed", richContentError: friendlyError(error), updatedAt: new Date().toISOString() };
+    await jobStorage.writeJob(job);
+    throw error;
   }
 }
 

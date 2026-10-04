@@ -76,8 +76,8 @@ export async function generateIkeaRichContentCopy(product: IkeaProduct) {
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
       signal: controller.signal,
       body: JSON.stringify({
-        model: process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-5-nano",
-        reasoning: { effort: "minimal" },
+        model: process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-6-luna",
+        reasoning: { effort: "none" },
         store: false,
         instructions: [
           "КРИТИЧЕСКОЕ ТРЕБОВАНИЕ: все значения headline, title, description, label и value пиши исключительно на русском языке кириллицей. Исходный текст на турецком нужно перевести; никогда не возвращай турецкий текст.",
@@ -108,7 +108,7 @@ export async function generateIkeaRichContentCopy(product: IkeaProduct) {
     if (!parsed.success) throw new Error(parsed.error.message);
     return {
       copy: parsed.data,
-      model: body.model || process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-5-nano",
+      model: body.model || process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-6-luna",
       usage: {
         inputTokens: body.usage?.input_tokens || 0,
         outputTokens: body.usage?.output_tokens || 0,
