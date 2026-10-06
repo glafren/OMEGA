@@ -5,7 +5,7 @@ export type JobStage =
   | "CREATING_ZIP" | "COMPLETED" | "ERROR";
 
 export type JobStatus = "queued" | "processing" | "completed" | "failed" | "canceled";
-export type ProductBrand = "ikea" | "philips";
+export type ProductBrand = "ikea" | "philips" | "philips-hue";
 
 export interface IkeaProductImage { url: string; width?: number; height?: number; order: number }
 export interface PhilipsFeature { imageUrl: string; title: string; text: string }

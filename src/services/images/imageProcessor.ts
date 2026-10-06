@@ -32,7 +32,7 @@ async function logoLayer(file: string, width: number, maxHeight: number, x: numb
 export async function generateCover(sourcePath: string, destination: string, modelName: string, productCode: string, brandingDir: string, config: ImageTemplateConfig = defaultTemplate, quality = appConfig.jpegQuality, brand: ProductBrand = "ikea") {
   const product = config.product;
   const productLayer = await containedBuffer(sourcePath, { x: product.areaX + product.padding, y: product.areaY + product.padding, width: product.areaWidth - product.padding * 2, height: product.areaHeight - product.padding * 2 }, { trimWhitespace: true, enlarge: true });
-  const brandLogo = await logoLayer(path.join(brandingDir, brand === "philips" ? "Philipslogo.png" : "ikea-logo.png"), config.ikeaLogo.width, config.ikeaLogo.maxHeight, config.ikeaLogo.x, config.ikeaLogo.y);
+  const brandLogo = await logoLayer(path.join(brandingDir, brand === "ikea" ? "ikea-logo.png" : "Philipslogo.png"), config.ikeaLogo.width, config.ikeaLogo.maxHeight, config.ikeaLogo.x, config.ikeaLogo.y);
   const store = await logoLayer(path.join(brandingDir, "store-logo.png"), config.storeLogo.width, config.storeLogo.maxHeight, config.storeLogo.x, config.storeLogo.y);
   let text: Buffer | null = null;
   if (brand === "ikea") {

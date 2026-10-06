@@ -7,6 +7,7 @@ import { AppError, friendlyError } from "@/lib/errors";
 import type { IkeaProduct, JobEvent, JobRecord, JobStage, OutputImage, ProductBrand } from "@/types";
 import { scrapeIkeaProduct } from "@/services/ikea/ikeaScraper";
 import { scrapePhilipsProduct } from "@/services/philips/philipsScraper";
+import { scrapePhilipsHueProduct } from "@/services/philips-hue/philipsHueScraper";
 import { codeDigits } from "@/services/ikea/productCode";
 import { downloadImages } from "@/services/images/downloader";
 import { generateCover, generateGalleryImage } from "@/services/images/imageProcessor";
@@ -34,7 +35,7 @@ async function createZip(outputDir: string, zipPath: string) {
 }
 
 async function generateRichContent(product: IkeaProduct) {
-  if (product.brand === "philips") {
+  if (product.brand === "philips" || product.brand === "philips-hue") {
     const content = await createPhilipsRichContent(product.features || []);
     return { content, blockCount: product.features?.length || 0, modelUsage: {} };
   }
@@ -65,7 +66,7 @@ export async function runJob(jobId: string, signal?: AbortSignal) {
     throwIfAborted(signal);
     await update("VALIDATING_INPUT", "Girdi doğrulandı", 5);
     const brand = job.brand || "ikea";
-    const scraper = brand === "philips" ? scrapePhilipsProduct : scrapeIkeaProduct;
+    const scraper = brand === "philips" ? scrapePhilipsProduct : brand === "philips-hue" ? scrapePhilipsHueProduct : scrapeIkeaProduct;
     const product = await scraper(job.input, update, signal);
     throwIfAborted(signal);
     job.product = product; await jobStorage.writeJob(job);
@@ -73,7 +74,7 @@ export async function runJob(jobId: string, signal?: AbortSignal) {
     await update("DOWNLOADING_IMAGES", "Görseller indiriliyor", 48);
     const paths = jobStorage.paths(jobId); const downloaded = await downloadImages(product.images.map((image) => image.url), paths.source, signal);
     throwIfAborted(signal);
-    const prefix = brand === "philips" ? product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase() : codeDigits(product.productCode); const outputs: OutputImage[] = [];
+    const prefix = brand === "ikea" ? codeDigits(product.productCode) : product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase(); const outputs: OutputImage[] = [];
     await update("PROCESSING_COVER", "Kapak görseli hazırlanıyor", 62);
     const coverName = `${prefix}_01.jpg`; const settings = await readSettings();
     await generateCover(downloaded[0], path.join(paths.output, coverName), product.modelName, product.productCode, brandingDir, settingsToTemplate(settings), settings.jpegQuality, brand);
@@ -128,7 +129,7 @@ export async function retryRichContent(jobId: string) {
   await jobStorage.writeJob(job);
   try {
     const generated = await generateRichContent(product);
-    const prefix = product.brand === "philips" ? product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase() : codeDigits(product.productCode);
+    const prefix = product.brand === "ikea" ? codeDigits(product.productCode) : product.productCode.replace(/[^a-z0-9]+/gi, "").toUpperCase();
     const filename = `${prefix}_rich-content.json`;
     const paths = jobStorage.paths(jobId);
     await writeFile(path.join(paths.output, filename), JSON.stringify(generated.content, null, 2), "utf8");

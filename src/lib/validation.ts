@@ -2,6 +2,7 @@ import { z } from "zod";
 
 const IKEA_HOST = /(^|\.)ikea\.(com(\.tr)?|[a-z]{2,3})$/i;
 const PHILIPS_HOST = /(^|\.)philips\.com\.tr$/i;
+const PHILIPS_HUE_HOST = /(^|\.)philips-hue\.com$/i;
 export const productCodePattern = /^\d{3}[. ]?\d{3}[. ]?\d{2}$/;
 
 export function normalizeProductCode(input: string): string | null {
@@ -19,9 +20,17 @@ export function isAllowedPhilipsUrl(input: string): boolean {
   catch { return false; }
 }
 
-export const createJobSchema = z.object({ brand: z.enum(["ikea", "philips"]).default("ikea"), input: z.string().trim().min(3).max(2048) }).superRefine(({ brand, input }, ctx) => {
+export function isAllowedPhilipsHueUrl(input: string): boolean {
+  try {
+    const url = new URL(input);
+    return url.protocol === "https:" && !url.port && PHILIPS_HUE_HOST.test(url.hostname) && url.pathname.toLowerCase().startsWith("/tr-tr/p/");
+  } catch { return false; }
+}
+
+export const createJobSchema = z.object({ brand: z.enum(["ikea", "philips", "philips-hue"]).default("ikea"), input: z.string().trim().min(3).max(2048) }).superRefine(({ brand, input }, ctx) => {
   if (brand === "ikea" && !normalizeProductCode(input) && !isAllowedIkeaUrl(input)) ctx.addIssue({ code: "custom", message: "Geçerli bir IKEA ürün linki veya ürün kodu girin." });
   if (brand === "philips" && !isAllowedPhilipsUrl(input)) ctx.addIssue({ code: "custom", message: "Geçerli bir Philips Türkiye ürün linki girin." });
+  if (brand === "philips-hue" && !isAllowedPhilipsHueUrl(input)) ctx.addIssue({ code: "custom", message: "Geçerli bir Philips Hue Türkiye ürün linki girin." });
 });
 
 export function assertSafeId(value: string): string {
