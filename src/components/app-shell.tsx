@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { BadgeDollarSign, ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, LoaderCircle, Menu, PackageSearch, Power, Settings, Tags, X } from "lucide-react";
+import { BadgeDollarSign, ChevronLeft, ChevronRight, FileSpreadsheet, ImageIcon, LoaderCircle, Menu, PackageSearch, Power, ReceiptText, Settings, Tags, X } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { QueueIndicator } from "@/components/queue-indicator";
@@ -13,6 +13,7 @@ const navigation = [
   { href: "/stock", label: "Stok Kontrol", description: "Sipariş analizi", icon: PackageSearch },
   { href: "/prices", label: "Fiyat Sorgu", description: "Ürün kodu fiyatı", icon: BadgeDollarSign },
   { href: "/stock-template", label: "Stok Şablonu", description: "Ozon Excel çıktısı", icon: FileSpreadsheet },
+  { href: "/ozon-shipping", label: "Kargo Ücreti ve Teslim Tarihi", description: "Teslimat kesinti raporu", icon: ReceiptText },
   { href: "/labels", label: "Etiket Yazdır", description: "PDF etiket düzenleme", icon: Tags },
 ];
 

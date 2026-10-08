@@ -11,6 +11,7 @@ import { canonicalizePhilipsHueImage } from "@/services/philips-hue/philipsHueSc
 import { createPhilipsRichContent } from "@/services/philips/richContent";
 import { createIkeaRichContent, selectIkeaRichContentTemplate } from "@/services/ikea/richContent";
 import type { IkeaProduct } from "@/types";
+import { findInternationalDeliveryTypes, formatAccrualDate, parsePostingNumbers, translatePostingStatus } from "@/services/ozon/shippingFees";
 
 describe("ürün kodu", () => { it("normalize eder", () => { expect(normalizeProductCode("806 264 18")).toBe("806.264.18"); expect(normalizeProductCode("80626418")).toBe("806.264.18"); }); it("geçersiz kodu reddeder", () => expect(normalizeProductCode("123")).toBeNull()); });
 describe("URL güvenliği", () => { it("IKEA alan adlarını kabul eder", () => { expect(isAllowedIkeaUrl("https://www.ikea.com.tr/urun/test-80626418")).toBe(true); expect(isAllowedIkeaUrl("https://ikea.de/de/p/test")).toBe(true); }); it("yanıltıcı ve güvensiz adresleri reddeder", () => { expect(isAllowedIkeaUrl("https://ikea.com.evil.test/x")).toBe(false); expect(isAllowedIkeaUrl("http://ikea.com/x")).toBe(false); }); });
@@ -63,3 +64,18 @@ describe("metin", () => it("uzun adı en fazla iki satıra böler", () => expect
 describe("model adı", () => { it("IKEA seri adındaki ikinci parçayı korur", () => expect(extractModelName("IKEA 365+ Kavanoz, cam")).toBe("IKEA 365+")); it("tek kelimelik model adlarını korur", () => expect(extractModelName("KALLAX Raf ünitesi, beyaz")).toBe("KALLAX")); });
 describe("görsel URL'leri", () => it("tekrarları, küçük sürümleri ve logoları kaldırır", () => { const result = deduplicateImageUrls([{ url: "https://image-ikea.test/urunler/500_500/a.jpg" }, { url: "https://image-ikea.test/urunler/2000_2000/a.jpg" }, { url: "https://images.ikea.com/logo.png" }]); expect(result).toHaveLength(1); expect(result[0].url).toContain("2000_2000"); }));
 describe("video zamanlaması", () => { it("seçilen süreyi görsellere eşit böler", () => { const count = 6; const duration = 23; const slide = calculateSlideDuration(count, duration); expect(count * slide - (count - 1) * TRANSITION_SECONDS).toBeCloseTo(duration, 8); }); it("10 saniyeden kısa videoyu reddeder", () => expect(() => calculateSlideDuration(4, 9)).toThrow()); });
+describe("Ozon kargo raporu", () => {
+  it("sipariş numaralarını ayırır ve tekrarları kaldırır", () => {
+    expect(parsePostingNumbers('"123-1\\\n123-2, 123-1"')).toEqual(["123-1", "123-2"]);
+    expect(parsePostingNumbers("123-1\\n123-2")).toEqual(["123-1", "123-2"]);
+  });
+  it("uluslararası teslimat tahakkuk türünü farklı dillerde bulur", () => {
+    const types = [{ id: 10, name: "InternationalDelivery", description: "International delivery service" }, { id: 20, name: "Acquiring", description: "Ödeme alma" }];
+    expect(findInternationalDeliveryTypes(types).map((type) => type.id)).toEqual([10]);
+  });
+  it("durumları Türkçeleştirir ve tarihi gün-ay-yıl biçimine getirir", () => {
+    expect(translatePostingStatus("delivered")).toBe("Teslim Edildi");
+    expect(translatePostingStatus("cancelled")).toBe("İptal Edildi");
+    expect(formatAccrualDate("2026-10-08T12:30:00Z")).toBe("08.10.2026");
+  });
+});
