@@ -27,14 +27,7 @@ async function readInput(request: Request) {
   return { input, comparisonFees: await parseShippingComparisonWorkbook(await comparisonFile.arrayBuffer()) };
 }
 
-export async function POST(request: Request) {
-  try {
-    const { input, comparisonFees } = await readInput(request);
-    const postingNumbers = parsePostingNumbers(input.postingNumbers);
-    if (!postingNumbers.length) throw new AppError("En az bir sipariş numarası girin.", "INVALID_INPUT");
-    if (postingNumbers.length > 500) throw new AppError("Tek seferde en fazla 500 sipariş sorgulanabilir.", "TOO_MANY_POSTINGS");
-    const rows = await createShippingFeeReport(input.store, postingNumbers, input.usdRate, request.signal, comparisonFees);
-
+async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFees: ReadonlyMap<string, number> | undefined, rows: Awaited<ReturnType<typeof createShippingFeeReport>>) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "OMEGA Operasyon Merkezi";
     workbook.created = new Date();
@@ -76,16 +69,76 @@ export async function POST(request: Request) {
     const output = Buffer.from(await workbook.xlsx.writeBuffer());
     const date = new Date().toISOString().slice(0, 10);
     const filename = `ozon-kargo-kesintileri-${input.store}-${date}.xlsx`;
-    return new Response(output, {
+    return { output, filename };
+}
+
+async function generateReport(request: Request, signal: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[5]) {
+  const { input, comparisonFees } = await readInput(request);
+  const postingNumbers = parsePostingNumbers(input.postingNumbers);
+  if (!postingNumbers.length) throw new AppError("En az bir sipariş numarası girin.", "INVALID_INPUT");
+  if (postingNumbers.length > 500) throw new AppError("Tek seferde en fazla 500 sipariş sorgulanabilir.", "TOO_MANY_POSTINGS");
+  const rows = await createShippingFeeReport(input.store, postingNumbers, input.usdRate, signal, comparisonFees, onProgress);
+  onProgress?.({ value: 92, stage: "Excel dosyası oluşturuluyor" });
+  const file = await buildWorkbook(input, comparisonFees, rows);
+  onProgress?.({ value: 98, stage: "Excel dosyası indirilmeye hazırlanıyor" });
+  return { ...file, rowCount: rows.length };
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof z.ZodError ? "Mağaza, sipariş numaraları ve dolar kurunu kontrol edin." : friendlyError(error);
+}
+
+function errorStatus(error: unknown) {
+  return error instanceof z.ZodError ? 400 : error instanceof AppError && error.code === "OZON_CREDENTIALS_MISSING" ? 503 : 500;
+}
+
+function streamingResponse(request: Request) {
+  const encoder = new TextEncoder();
+  const reportAbort = new AbortController();
+  const signal = AbortSignal.any([request.signal, reportAbort.signal]);
+  let cancelled = false;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (event: unknown) => {
+        if (!cancelled && !signal.aborted) controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+      };
+      try {
+        send({ type: "progress", value: 1, stage: "Rapor isteği hazırlanıyor" });
+        const result = await generateReport(request, signal, (progress) => send({ type: "progress", ...progress }));
+        send({ type: "complete", value: 100, stage: "Rapor hazır", filename: result.filename, rowCount: result.rowCount, content: result.output.toString("base64") });
+      } catch (error) {
+        if (!signal.aborted) send({ type: "error", error: errorMessage(error) });
+      } finally {
+        if (!cancelled) controller.close();
+      }
+    },
+    cancel() {
+      cancelled = true;
+      reportAbort.abort();
+    },
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store, no-transform",
+      "X-Accel-Buffering": "no",
+    },
+  });
+}
+
+export async function POST(request: Request) {
+  if (request.headers.get("accept")?.includes("application/x-ndjson")) return streamingResponse(request);
+  try {
+    const result = await generateReport(request, request.signal);
+    return new Response(result.output, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": `attachment; filename="${result.filename}"`,
         "Cache-Control": "no-store",
-        "X-Ozon-Row-Count": String(rows.length),
+        "X-Ozon-Row-Count": String(result.rowCount),
       },
     });
   } catch (error) {
-    const status = error instanceof z.ZodError ? 400 : error instanceof AppError && error.code === "OZON_CREDENTIALS_MISSING" ? 503 : 500;
-    return NextResponse.json({ error: error instanceof z.ZodError ? "Mağaza, sipariş numaraları ve dolar kurunu kontrol edin." : friendlyError(error) }, { status });
+    return NextResponse.json({ error: errorMessage(error) }, { status: errorStatus(error) });
   }
 }

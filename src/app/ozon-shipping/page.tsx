@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Image from "next/image";
-import { Download, FileSpreadsheet, LoaderCircle, PackageCheck, ReceiptText } from "lucide-react";
+import { Download, FileSpreadsheet, LoaderCircle, PackageCheck, ReceiptText, Square } from "lucide-react";
 import { PageHeading } from "@/components/page-heading";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -15,6 +15,8 @@ const stores: Array<{ id: OzonStore; name: string; description: string; logo: st
   { id: "nozzle", name: "NOZZLE", description: "NOZZLE Ozon Seller hesabı", logo: "/branding/nozzle logo.png" },
 ];
 
+type ReportEvent = { type: "progress" | "complete" | "error"; value?: number; stage?: string; filename?: string; rowCount?: number; content?: string; error?: string };
+
 export default function OzonShippingPage() {
   const [store, setStore] = useState<OzonStore>("omega");
   const [postingNumbers, setPostingNumbers] = useState("");
@@ -23,12 +25,17 @@ export default function OzonShippingPage() {
   const [comparisonFile, setComparisonFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [progress, setProgress] = useState({ value: 0, stage: "" });
+  const abortRef = useRef<AbortController | null>(null);
 
   const submit = async () => {
     setMessage("");
     if (!postingNumbers.trim() || !Number(usdRate)) return setMessage("Sipariş numaralarını ve geçerli dolar kurunu girin.");
     if (comparisonEnabled && !comparisonFile) return setMessage("Kargo ücreti kıyaslaması için bir .xlsx dosyası yükleyin.");
+    const abortController = new AbortController();
+    abortRef.current = abortController;
     setBusy(true);
+    setProgress({ value: 1, stage: "Rapor isteği hazırlanıyor" });
     try {
       const form = new FormData();
       form.set("store", store);
@@ -36,22 +43,49 @@ export default function OzonShippingPage() {
       form.set("usdRate", usdRate);
       form.set("comparisonEnabled", String(comparisonEnabled));
       if (comparisonEnabled && comparisonFile) form.set("comparisonFile", comparisonFile);
-      const response = await fetch("/api/ozon/shipping-fees", { method: "POST", body: form });
+      const response = await fetch("/api/ozon/shipping-fees", { method: "POST", headers: { Accept: "application/x-ndjson" }, body: form, signal: abortController.signal });
       if (!response.ok) {
         const body = await response.json().catch(() => ({}));
         throw new Error(body.error || "Rapor oluşturulamadı.");
       }
-      const blob = await response.blob();
-      const disposition = response.headers.get("content-disposition") || "";
-      const filename = disposition.match(/filename="([^"]+)"/)?.[1] || `ozon-kargo-kesintileri-${store}.xlsx`;
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url; link.download = filename; link.click();
-      URL.revokeObjectURL(url);
-      setMessage(`${response.headers.get("x-ozon-row-count") || ""} satırlık Excel raporu indirildi.`);
+      if (!response.body) throw new Error("Rapor ilerlemesi alınamadı.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      let completed = false;
+      const handleEvent = (event: ReportEvent) => {
+        if (event.type === "progress") setProgress({ value: event.value || 0, stage: event.stage || "İşlem devam ediyor" });
+        if (event.type === "error") throw new Error(event.error || "Rapor oluşturulamadı.");
+        if (event.type !== "complete" || !event.content) return;
+        setProgress({ value: 100, stage: event.stage || "Rapor hazır" });
+        const binary = atob(event.content);
+        const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+        const link = document.createElement("a");
+        link.href = url; link.download = event.filename || `ozon-kargo-kesintileri-${store}.xlsx`; link.click();
+        URL.revokeObjectURL(url);
+        setMessage(`${event.rowCount || 0} satırlık Excel raporu indirildi.`);
+        completed = true;
+      };
+      while (true) {
+        const { done, value } = await reader.read();
+        pending += decoder.decode(value, { stream: !done });
+        const lines = pending.split("\n");
+        pending = lines.pop() || "";
+        for (const line of lines) if (line.trim()) handleEvent(JSON.parse(line) as ReportEvent);
+        if (done) break;
+      }
+      if (pending.trim()) handleEvent(JSON.parse(pending) as ReportEvent);
+      if (!completed) throw new Error("Rapor tamamlanmadan bağlantı kapandı.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Rapor oluşturulamadı.");
-    } finally { setBusy(false); }
+      if (abortController.signal.aborted) {
+        setProgress({ value: 0, stage: "İşlem durduruldu" });
+        setMessage("İşlem kullanıcı tarafından durduruldu.");
+      } else setMessage(error instanceof Error ? error.message : "Rapor oluşturulamadı.");
+    } finally {
+      if (abortRef.current === abortController) abortRef.current = null;
+      setBusy(false);
+    }
   };
 
   return <main className="page-enter mx-auto max-w-6xl px-5 py-8 lg:px-8 lg:py-10">
@@ -65,8 +99,9 @@ export default function OzonShippingPage() {
           <label className="flex cursor-pointer items-center gap-3"><input type="checkbox" checked={comparisonEnabled} onChange={(event) => { setComparisonEnabled(event.target.checked); if (!event.target.checked) setComparisonFile(null); }} disabled={busy} className="size-5 rounded border-slate-300 accent-blue-700" /><span><span className="block text-sm font-black text-slate-900">Kargo ücret kıyaslaması yap</span><span className="mt-0.5 block text-xs text-slate-500">Birim ücret × adet eksi Ozon kesintisi rapora işaretli fark olarak eklenir.</span></span></label>
           {comparisonEnabled && <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-xl border border-dashed border-blue-300 bg-white p-4 transition hover:border-blue-500"><FileSpreadsheet className="size-6 shrink-0 text-blue-700" /><span className="min-w-0 flex-1"><span className="block truncate text-sm font-bold text-slate-900">{comparisonFile?.name || "Kıyaslama Excel dosyasını seçin"}</span><span className="mt-0.5 block text-xs text-slate-500">İlk satır: Ürün Kodu ve Kargo Ücreti (USD). Ücret tek adet içindir.</span></span><input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" disabled={busy} className="sr-only" onChange={(event) => { setComparisonFile(event.target.files?.[0] || null); setMessage(""); }} /></label>}
         </div>
-        {message && <p className={cn("mt-5 rounded-xl px-4 py-3 text-sm font-semibold", message.includes("indirildi") ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700")}>{message}</p>}
-        <div className="mt-6 flex justify-end"><Button onClick={() => void submit()} disabled={busy}>{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}{busy ? "Ozon sorgulanıyor" : "Excel Raporunu Oluştur"}</Button></div>
+        {busy && <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4" aria-live="polite"><div className="flex items-center justify-between gap-4 text-sm"><span className="font-bold text-blue-950">{progress.stage}</span><span className="tabular-nums font-black text-blue-700">%{progress.value}</span></div><div role="progressbar" aria-label="Rapor oluşturma ilerlemesi" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.value} className="mt-3 h-2.5 overflow-hidden rounded-full bg-blue-100"><div className="h-full rounded-full bg-blue-700 transition-[width] duration-300" style={{ width: `${progress.value}%` }} /></div></div>}
+        {message && <p className={cn("mt-5 rounded-xl px-4 py-3 text-sm font-semibold", message.includes("indirildi") ? "bg-emerald-50 text-emerald-700" : message.includes("durduruldu") ? "bg-amber-50 text-amber-800" : "bg-red-50 text-red-700")}>{message}</p>}
+        <div className="mt-6 flex justify-end gap-3">{busy && <Button variant="secondary" className="border-red-200 text-red-700 hover:bg-red-50" onClick={() => { setProgress((current) => ({ ...current, stage: "İşlem durduruluyor" })); abortRef.current?.abort(); }}><Square className="size-4 fill-current" />İşlemi Durdur</Button>}<Button onClick={() => void submit()} disabled={busy}>{busy ? <LoaderCircle className="size-4 animate-spin" /> : <Download className="size-4" />}{busy ? "Rapor hazırlanıyor" : "Excel Raporunu Oluştur"}</Button></div>
       </Card>
       <div className="space-y-4">
         <Card className="border-0 bg-[#101c33] p-6 text-white shadow-[0_12px_35px_rgba(15,23,42,.12)]"><ReceiptText className="size-8 text-[#fefeeb]" /><h2 className="mt-5 text-lg font-black">Rapor içeriği</h2><ul className="mt-4 space-y-3 text-sm leading-6 text-slate-300"><li>• Mağaza ve sipariş numarası</li><li>• Tahakkuk tarihi ve ürün kodu</li><li>• RUB kesintisi ve USD karşılığı</li><li>• Bulunamayan kayıt açıklaması</li></ul></Card>

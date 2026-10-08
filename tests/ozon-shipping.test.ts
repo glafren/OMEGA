@@ -70,6 +70,47 @@ describe("Ozon kargo kesinti raporu", () => {
     expect(sheet?.getCell("K1").value).toBe("Açıklama");
   });
 
+  it("rapor aşamalarını canlı iletir ve tamamlanan Excel'i gönderir", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v1/finance/accrual/types")) return Response.json({ accrual_types: [{ id: 91, name: "InternationalDelivery" }] });
+      if (url.endsWith("/v3/posting/fbs/get")) return Response.json({ result: { status: "delivered", products: [{ offer_id: "URUN-001", quantity: 1 }] } });
+      if (url.endsWith("/v1/finance/accrual/postings")) return Response.json({ posting_accruals: [{ posting_number: "ORDER-1", accruals: [{ type_id: 91, accrued: { amount: "-193", currency: "RUB" } }] }] });
+      return new Response(null, { status: 404 });
+    });
+    const form = new FormData();
+    form.set("store", "omega"); form.set("postingNumbers", "ORDER-1"); form.set("usdRate", "96.5"); form.set("comparisonEnabled", "false");
+    const response = await POST(new Request("http://localhost/api/ozon/shipping-fees", { method: "POST", headers: { Accept: "application/x-ndjson" }, body: form }));
+    expect(response.headers.get("content-type")).toContain("application/x-ndjson");
+    const events = (await response.text()).trim().split("\n").map((line) => JSON.parse(line) as { type: string; value?: number; stage?: string; content?: string });
+    expect(events.some((event) => event.stage?.includes("Siparişler sorgulanıyor"))).toBe(true);
+    expect(events.some((event) => event.stage?.includes("Teslimat tahakkukları alınıyor"))).toBe(true);
+    const complete = events.at(-1);
+    expect(complete).toMatchObject({ type: "complete", value: 100, stage: "Rapor hazır" });
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(complete?.content || "", "base64") as never);
+    expect(workbook.getWorksheet("Kargo Kesintileri")?.getCell("B2").value).toBe("ORDER-1");
+  });
+
+  it("ilerleme akışı kapatıldığında aktif Ozon isteğini iptal eder", async () => {
+    let requestAborted = false;
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+      const signal = init?.signal;
+      return await new Promise<Response>((_resolve, reject) => {
+        const abort = () => { requestAborted = true; reject(new DOMException("Aborted", "AbortError")); };
+        if (signal?.aborted) abort(); else signal?.addEventListener("abort", abort, { once: true });
+      });
+    });
+    const form = new FormData();
+    form.set("store", "omega"); form.set("postingNumbers", "ORDER-1"); form.set("usdRate", "96.5"); form.set("comparisonEnabled", "false");
+    const response = await POST(new Request("http://localhost/api/ozon/shipping-fees", { method: "POST", headers: { Accept: "application/x-ndjson" }, body: form }));
+    const reader = response.body?.getReader();
+    await reader?.read();
+    await reader?.cancel();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(requestAborted).toBe(true);
+  });
+
   it("açılabilir XLSX raporu üretir", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);

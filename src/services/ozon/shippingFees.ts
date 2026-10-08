@@ -3,6 +3,7 @@ import { setTimeout as wait } from "node:timers/promises";
 import { normalizeProductCode } from "@/services/ozon/comparisonWorkbook";
 
 export type OzonStore = "omega" | "nozzle";
+export type ShippingReportProgress = { value: number; stage: string };
 
 type OzonCredentials = { clientId: string; apiKey: string };
 type Money = { amount?: string; currency?: string };
@@ -158,25 +159,35 @@ async function postingDetails(postingNumber: string, client: OzonClient, signal?
   return { status: result.status || "unknown", products: [...products.values()] };
 }
 
-export async function createShippingFeeReport(store: OzonStore, postingNumbers: string[], usdRate: number, signal?: AbortSignal, comparisonFees?: ReadonlyMap<string, number>): Promise<ShippingFeeRow[]> {
+export async function createShippingFeeReport(store: OzonStore, postingNumbers: string[], usdRate: number, signal?: AbortSignal, comparisonFees?: ReadonlyMap<string, number>, onProgress?: (progress: ShippingReportProgress) => void): Promise<ShippingFeeRow[]> {
   const credentials = credentialsFor(store);
   const client = new OzonClient(credentials);
+  onProgress?.({ value: 5, stage: "Ozon tahakkuk türleri alınıyor" });
   const typeResponse = await client.post<{ accrual_types?: AccrualType[] }>("/v1/finance/accrual/types", {}, signal);
   const internationalTypes = findInternationalDeliveryTypes(typeResponse.accrual_types || []);
   if (!internationalTypes.length) throw new AppError("Ozon tahakkuk türleri içinde ‘Uluslararası teslimat hizmeti’ bulunamadı. Tür kimliğini ayarlamak gerekebilir.", "OZON_FEE_TYPE_NOT_FOUND");
   const typeIds = new Set(internationalTypes.map((type) => type.id));
 
   const statuses: Array<{ postingNumber: string; status: string; products: PostingProduct[]; error: string }> = [];
-  for (const postingNumber of postingNumbers) {
+  for (const [index, postingNumber] of postingNumbers.entries()) {
     try { statuses.push({ postingNumber, ...await postingDetails(postingNumber, client, signal), error: "" }); }
-    catch (error) { statuses.push({ postingNumber, status: "unknown", products: [], error: error instanceof AppError ? error.userMessage : "Sipariş durumu sorgulanamadı." }); }
+    catch (error) {
+      if (signal?.aborted) throw error;
+      statuses.push({ postingNumber, status: "unknown", products: [], error: error instanceof AppError ? error.userMessage : "Sipariş durumu sorgulanamadı." });
+    }
+    onProgress?.({ value: 10 + Math.round(((index + 1) / postingNumbers.length) * 50), stage: `Siparişler sorgulanıyor (${index + 1}/${postingNumbers.length})` });
   }
   const delivered = statuses.filter((item) => item.status.toLowerCase() === "delivered").map((item) => item.postingNumber);
   const accruals = new Map<string, PostingAccrual[]>();
+  const batchCount = Math.max(1, Math.ceil(delivered.length / 200));
   for (let index = 0; index < delivered.length; index += 200) {
     const response = await client.post<{ posting_accruals?: PostingAccrualGroup[] }>("/v1/finance/accrual/postings", { posting_numbers: delivered.slice(index, index + 200) }, signal);
     for (const group of response.posting_accruals || []) accruals.set(group.posting_number, group.accruals || []);
+    const completedBatch = Math.floor(index / 200) + 1;
+    onProgress?.({ value: 60 + Math.round((completedBatch / batchCount) * 25), stage: `Teslimat tahakkukları alınıyor (${completedBatch}/${batchCount})` });
   }
+  if (!delivered.length) onProgress?.({ value: 85, stage: "Teslim edilmiş sipariş bulunamadı" });
+  onProgress?.({ value: 88, stage: "Rapor verileri hazırlanıyor" });
 
   return statuses.flatMap(({ postingNumber, status, products, error }) => {
     const isDelivered = status.toLowerCase() === "delivered";
