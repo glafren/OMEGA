@@ -8,6 +8,11 @@ import type { ScrapeProgress } from "@/services/ikea/ikeaScraper";
 
 const PHILIPS_IMAGE_SIZE = 1200;
 
+type PhilipsImageCandidate = {
+  src: string;
+  isFeature: boolean;
+};
+
 function productCodeFromUrl(input: string) {
   try {
     const segment = new URL(input).pathname.match(/^\/c-p\/([^/]+)/i)?.[1];
@@ -29,6 +34,22 @@ export function canonicalizePhilipsFeatureImage(input: string): string | null {
     if (url.protocol !== "https:" || url.hostname.toLowerCase() !== "images.philips.com" || !url.pathname.toLowerCase().startsWith("/is/image/philipsconsumer/")) return null;
     return `${url.origin}${url.pathname}?$png$&wid=${PHILIPS_IMAGE_SIZE}`;
   } catch { return null; }
+}
+
+export function selectPhilipsProductImageUrls(primary: string, candidates: PhilipsImageCandidate[]): string[] {
+  const urls = [primary, ...candidates.filter((candidate) => !candidate.isFeature).map((candidate) => candidate.src)]
+    .map(canonicalizePhilipsImage)
+    .filter((url): url is string => Boolean(url));
+  const seen = new Set<string>();
+  const images: string[] = [];
+  for (const url of urls) {
+    const key = new URL(url).pathname.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    images.push(url);
+    if (images.length >= 20) break;
+  }
+  return images;
 }
 
 export async function scrapePhilipsProduct(input: string, progress: ScrapeProgress, signal?: AbortSignal): Promise<IkeaProduct> {
@@ -69,14 +90,10 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
       const data = product as JsonObject | null;
       const imageValue = data?.image;
       const primary = typeof imageValue === "string" ? imageValue : Array.isArray(imageValue) && typeof imageValue[0] === "string" ? imageValue[0] : "";
-      const images = [...document.querySelectorAll<HTMLImageElement>("img")];
-      const primaryPath = primary ? new URL(primary, location.href).pathname : "";
-      const primaryElement = images.find((image) => (image.currentSrc || image.src).includes(primaryPath));
-      const galleryAlt = primaryElement?.alt?.trim();
-      const gallery = images.filter((image) => {
-        const source = image.currentSrc || image.src;
-        return source.includes("images.philips.com/is/image/philipsconsumer/") && (!galleryAlt || image.alt.trim() === galleryAlt);
-      }).map((image) => image.currentSrc || image.src);
+      const gallery = [...document.querySelectorAll<HTMLImageElement>("img")].map((image) => ({
+        src: image.currentSrc || image.src,
+        isFeature: Boolean(image.closest('[data-testid="features"] [data-testid="feature-card"]')),
+      }));
       const features = [...document.querySelectorAll<HTMLElement>('[data-testid="features"] [data-testid="feature-card"]')].map((card) => ({
         image: card.querySelector<HTMLImageElement>("img")?.currentSrc || card.querySelector<HTMLImageElement>("img")?.src || "",
         title: card.querySelector("h3")?.textContent?.replace(/\s+/g, " ").trim() || "",
@@ -89,15 +106,8 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
     const fullName = raw.name?.replace(/\s+/g, " ").trim();
     if (!productCode || !fullName) throw new AppError("Philips ürün bilgileri alınamadı.", "PRODUCT_DATA_MISSING");
     await progress("EXTRACTING_IMAGES", "Philips ürün görselleri aranıyor", 36);
-    const urls = [raw.primary, ...raw.gallery].map(canonicalizePhilipsImage).filter((url): url is string => Boolean(url));
-    const seen = new Set<string>();
-    const images: IkeaProductImage[] = [];
-    for (const url of urls) {
-      const key = new URL(url).pathname.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key); images.push({ url, width: PHILIPS_IMAGE_SIZE, height: PHILIPS_IMAGE_SIZE, order: images.length });
-      if (images.length >= 20) break;
-    }
+    const images: IkeaProductImage[] = selectPhilipsProductImageUrls(raw.primary, raw.gallery)
+      .map((url, order) => ({ url, width: PHILIPS_IMAGE_SIZE, height: PHILIPS_IMAGE_SIZE, order }));
     if (!images.length) throw new AppError("Bu Philips ürünü için görsel bulunamadı.", "NO_IMAGES");
     const features: PhilipsFeature[] = raw.features.flatMap((feature) => {
       const imageUrl = canonicalizePhilipsFeatureImage(feature.image);
