@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { createJobSchema, isAllowedIkeaUrl, isAllowedPhilipsHueUrl, isAllowedPhilipsUrl, normalizeProductCode } from "@/lib/validation";
 import { sanitizeFilename } from "@/lib/filename";
 import { centeredPlacement, containSize } from "@/lib/image-layout";
@@ -6,6 +9,7 @@ import { deduplicateImageUrls } from "@/services/ikea/imageExtractor";
 import { extractModelName } from "@/services/ikea/ikeaScraper";
 import { fitProductName } from "@/services/images/textRenderer";
 import { calculateSlideDuration, TRANSITION_SECONDS } from "@/services/video/videoCreator";
+import { downloadImages } from "@/services/images/downloader";
 import { canonicalizePhilipsFeatureImage, canonicalizePhilipsImage, selectPhilipsProductImageUrls } from "@/services/philips/philipsScraper";
 import { canonicalizePhilipsHueImage } from "@/services/philips-hue/philipsHueScraper";
 import { createPhilipsRichContent } from "@/services/philips/richContent";
@@ -63,6 +67,7 @@ describe("yerleşim", () => { it("oranı koruyarak sığdırır", () => expect(c
 describe("metin", () => it("uzun adı en fazla iki satıra böler", () => expect(fitProductName("ÇOK UZUN BİR IKEA ÜRÜN MODEL ADI", 240, 44, 20).lines.length).toBeLessThanOrEqual(2)));
 describe("model adı", () => { it("IKEA seri adındaki ikinci parçayı korur", () => expect(extractModelName("IKEA 365+ Kavanoz, cam")).toBe("IKEA 365+")); it("tek kelimelik model adlarını korur", () => expect(extractModelName("KALLAX Raf ünitesi, beyaz")).toBe("KALLAX")); });
 describe("görsel URL'leri", () => it("tekrarları, küçük sürümleri ve logoları kaldırır", () => { const result = deduplicateImageUrls([{ url: "https://image-ikea.test/urunler/500_500/a.jpg" }, { url: "https://image-ikea.test/urunler/2000_2000/a.jpg" }, { url: "https://images.ikea.com/logo.png" }]); expect(result).toHaveLength(1); expect(result[0].url).toContain("2000_2000"); }));
+describe("görsel indirme", () => { it("geçici hatayı tekrar deneyip sırayı korur", async () => { const dir = await mkdtemp(path.join(tmpdir(), "omega-images-")); const attempts = new Map<string, number>(); const fetchMock = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => { const url = String(input); attempts.set(url, (attempts.get(url) || 0) + 1); if (url.endsWith("/first") && attempts.get(url) === 1) return new Response("bad gateway", { status: 502 }); return new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "image/png", "content-length": "3" } }); }); try { const result = await downloadImages(["https://image.test/first", "https://image.test/second"], dir); expect(result.map((item) => path.basename(item))).toEqual(["01.source", "02.source"]); expect(attempts.get("https://image.test/first")).toBe(2); } finally { fetchMock.mockRestore(); await rm(dir, { recursive: true, force: true }); } }); });
 describe("video zamanlaması", () => { it("seçilen süreyi görsellere eşit böler", () => { const count = 6; const duration = 23; const slide = calculateSlideDuration(count, duration); expect(count * slide - (count - 1) * TRANSITION_SECONDS).toBeCloseTo(duration, 8); }); it("10 saniyeden kısa videoyu reddeder", () => expect(() => calculateSlideDuration(4, 9)).toThrow()); });
 describe("Ozon kargo raporu", () => {
   it("sipariş numaralarını ayırır ve tekrarları kaldırır", () => {
