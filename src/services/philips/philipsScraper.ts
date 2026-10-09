@@ -11,6 +11,7 @@ const PHILIPS_IMAGE_SIZE = 1200;
 type PhilipsImageCandidate = {
   src: string;
   isFeature: boolean;
+  isProductGallery?: boolean;
 };
 
 function productCodeFromUrl(input: string) {
@@ -37,7 +38,9 @@ export function canonicalizePhilipsFeatureImage(input: string): string | null {
 }
 
 export function selectPhilipsProductImageUrls(primary: string, candidates: PhilipsImageCandidate[]): string[] {
-  const urls = [primary, ...candidates.filter((candidate) => !candidate.isFeature).map((candidate) => candidate.src)]
+  const productGalleryCandidates = candidates.filter((candidate) => candidate.isProductGallery);
+  const galleryCandidates = productGalleryCandidates.length ? productGalleryCandidates : candidates.filter((candidate) => !candidate.isFeature);
+  const urls = [primary, ...galleryCandidates.map((candidate) => candidate.src)]
     .map(canonicalizePhilipsImage)
     .filter((url): url is string => Boolean(url));
   const seen = new Set<string>();
@@ -90,9 +93,15 @@ export async function scrapePhilipsProduct(input: string, progress: ScrapeProgre
       const data = product as JsonObject | null;
       const imageValue = data?.image;
       const primary = typeof imageValue === "string" ? imageValue : Array.isArray(imageValue) && typeof imageValue[0] === "string" ? imageValue[0] : "";
-      const gallery = [...document.querySelectorAll<HTMLImageElement>("img")].map((image) => ({
+      const images = [...document.querySelectorAll<HTMLImageElement>("img")];
+      const primaryPath = primary ? new URL(primary, location.href).pathname : "";
+      const productGallery = primaryPath ? [...document.querySelectorAll<HTMLElement>(".swiper")]
+        .find((swiper) => [...swiper.querySelectorAll<HTMLImageElement>("img")]
+          .some((image) => (image.currentSrc || image.src).includes(primaryPath))) : null;
+      const gallery = images.map((image) => ({
         src: image.currentSrc || image.src,
         isFeature: Boolean(image.closest('[data-testid="features"] [data-testid="feature-card"]')),
+        isProductGallery: productGallery ? productGallery.contains(image) : false,
       }));
       const features = [...document.querySelectorAll<HTMLElement>('[data-testid="features"] [data-testid="feature-card"]')].map((card) => ({
         image: card.querySelector<HTMLImageElement>("img")?.currentSrc || card.querySelector<HTMLImageElement>("img")?.src || "",
