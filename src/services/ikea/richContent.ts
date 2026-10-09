@@ -1,12 +1,13 @@
 import type { IkeaProduct } from "@/types";
+import { sanitizeOzonText } from "@/lib/ozonText";
 import type { RichContentCopy } from "@/services/openai/richContentCopy";
 
 type TemplateKind = "gallery" | "chess" | "compact";
 type JsonObject = Record<string, unknown>;
 const IKEA_ROLL_IMAGE = "https://ir-20.ozone.ru/s3/multimedia-1-d/ww1200/14789671717.jpg";
 
-const title = (content: string, size = "size4") => ({ items: [{ type: "text", content }], size, align: "left", color: "color1" });
-const text = (content: string) => ({ size: "size2", align: "left", color: "color1", items: [{ type: "text", content }] });
+const title = (content: string, size = "size4") => ({ items: [{ type: "text", content: sanitizeOzonText(content) }], size, align: "left", color: "color1" });
+const text = (content: string) => ({ size: "size2", align: "left", color: "color1", items: [{ type: "text", content: sanitizeOzonText(content) }] });
 const image = (src: string, widthMobile: number, heightMobile: number, position = "fill") => ({
   src, srcMobile: src, alt: "", position, positionMobile: position, widthMobile, heightMobile,
 });
@@ -28,8 +29,8 @@ function technicalItems(product: IkeaProduct, copy: RichContentCopy) {
     ...copy.specifications.map((item) => `${item.label}: ${item.value}`),
   ];
   return values.flatMap((content, index) => index === values.length - 1
-    ? [{ type: "text", content }]
-    : [{ type: "text", content }, { type: "br" }, { type: "br" }]);
+    ? [{ type: "text", content: sanitizeOzonText(content) }]
+    : [{ type: "text", content: sanitizeOzonText(content) }, { type: "br" }, { type: "br" }]);
 }
 
 function technicalBlock(product: IkeaProduct, copy: RichContentCopy, src: string) {

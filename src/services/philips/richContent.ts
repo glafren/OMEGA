@@ -1,4 +1,5 @@
 import { AppError } from "@/lib/errors";
+import { sanitizeOzonText } from "@/lib/ozonText";
 import type { PhilipsFeature } from "@/types";
 
 type Translator = (text: string) => Promise<string>;
@@ -77,7 +78,7 @@ export async function translateFeaturesToRussian(features: PhilipsFeature[]): Pr
         model,
         reasoning: { effort: "none" },
         store: false,
-        instructions: "Türkçe Philips ürün özelliklerini doğal ve doğru Rusçaya çevir. Yalnızca kaynak metindeki bilgileri koru; yeni özellik, iddia veya pazarlama ifadesi ekleme. Her kartı ve sırasını birebir koru. Tüm title ve text değerleri Kiril alfabesiyle Rusça olmalı.",
+        instructions: "Türkçe Philips ürün özelliklerini doğal ve doğru Rusçaya çevir. Yalnızca kaynak metindeki bilgileri koru; yeni özellik, iddia veya pazarlama ifadesi ekleme. Her kartı ve sırasını birebir koru. Tüm title ve text değerleri Kiril alfabesiyle Rusça olmalı. Ozon kuralları gereği original/orijinal/orjinal/оригинальный/оригинал anlamındaki özgünlük iddialarını asla yazma; gerekiyorsa bu kelimeyi cümleden çıkar.",
         input: JSON.stringify(features.map(({ title, text }) => ({ title, text }))),
         text: {
           format: {
@@ -134,8 +135,8 @@ export async function createPhilipsRichContent(features: PhilipsFeature[], trans
     blocks.push({
       img: { src: feature.imageUrl, srcMobile: feature.imageUrl, alt: "", position: "to_the_edge", positionMobile: "to_the_edge", widthMobile: 400, heightMobile: 225 },
       imgLink: "",
-      title: { items: [{ type: "text", content: title }], size: "size4", align: "left", color: "color1" },
-      text: { size: "size2", align: "left", color: "color1", items: [{ type: "text", content: text }] },
+      title: { items: [{ type: "text", content: sanitizeOzonText(title) }], size: "size4", align: "left", color: "color1" },
+      text: { size: "size2", align: "left", color: "color1", items: [{ type: "text", content: sanitizeOzonText(text) }] },
     });
   }
   return { content: [{ widgetName: "raShowcase", type: "tileL", blocks }], version: 0.3 };

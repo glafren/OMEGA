@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AppError } from "@/lib/errors";
+import { sanitizeOzonText } from "@/lib/ozonText";
 import type { IkeaProduct } from "@/types";
 
 const hasCyrillic = (value: string) => /[А-Яа-яЁё]/u.test(value);
@@ -84,6 +85,7 @@ export async function generateIkeaRichContentCopy(product: IkeaProduct) {
           "Ты создаёшь лаконичный Rich Content для карточки товара IKEA на Ozon на русском языке.",
           "Используй только факты из переданного источника; не выдумывай характеристики, гарантии или свойства.",
           "Не упоминай цену, наличие, доставку или акции.",
+          "Не используй слова original, orijinal, orjinal, оригинальный или оригинал и не делай заявлений об оригинальности товара.",
           "Подготовь ровно 6 содержательных и неповторяющихся преимуществ, выбирая разные аспекты: назначение, комплектация, материал, конструкция, размеры, удобство, уход или ограничения — только если они есть в источнике.",
           "Каждое описание должно содержать 2–4 полноценных предложения и примерно 220–450 знаков: сначала конкретный факт о товаре, затем объяснение, как и в какой бытовой ситуации он полезен покупателю.",
           "Пиши уверенно и естественно; не используй фразы вроде «в описании указано» или «товар описан как». Не делай текст телеграфным, не повторяй одну выгоду разными словами и не заполняй его общими рекламными фразами.",
@@ -107,7 +109,17 @@ export async function generateIkeaRichContentCopy(product: IkeaProduct) {
     const parsed = richContentCopySchema.safeParse(JSON.parse(readOutputText(body)));
     if (!parsed.success) throw new Error(parsed.error.message);
     return {
-      copy: parsed.data,
+      copy: {
+        headline: sanitizeOzonText(parsed.data.headline),
+        benefits: parsed.data.benefits.map((benefit) => ({
+          title: sanitizeOzonText(benefit.title),
+          description: sanitizeOzonText(benefit.description),
+        })),
+        specifications: parsed.data.specifications.map((specification) => ({
+          label: sanitizeOzonText(specification.label),
+          value: sanitizeOzonText(specification.value),
+        })),
+      },
       model: body.model || process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-6-luna",
       usage: {
         inputTokens: body.usage?.input_tokens || 0,
