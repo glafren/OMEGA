@@ -11,6 +11,7 @@ import { scrapePhilipsHueProduct } from "@/services/philips-hue/philipsHueScrape
 import { codeDigits } from "@/services/ikea/productCode";
 import { downloadImages } from "@/services/images/downloader";
 import { generateCover, generateGalleryImage } from "@/services/images/imageProcessor";
+import { brandClosingImageFilename } from "@/services/images/brandClosingImage";
 import { emitJobEvent } from "./jobEvents";
 import { jobStorage } from "@/services/storage/localStorage";
 import { readSettings, settingsToTemplate } from "@/services/settings/settingsService";
@@ -87,6 +88,11 @@ export async function runJob(jobId: string, signal?: AbortSignal) {
       await generateGalleryImage(downloaded[index], path.join(paths.output, filename), settings.backgroundColor, settings.jpegQuality); outputs.push({ id, filename, width: 750, height: 1000, isCover: false });
       await update("PROCESSING_GALLERY", `${index + 1}/${downloaded.length} görsel hazırlandı`, 70 + Math.round(((index + 1) / downloaded.length) * 17));
     }
+    throwIfAborted(signal);
+    await update("PROCESSING_GALLERY", "Marka kapanış görseli hazırlanıyor", 87);
+    const closingId = String(downloaded.length + 1).padStart(2, "0"); const closingName = `${prefix}_${closingId}.jpg`;
+    await generateGalleryImage(path.join(brandingDir, brandClosingImageFilename(brand)), path.join(paths.output, closingName), settings.backgroundColor, settings.jpegQuality);
+    outputs.push({ id: closingId, filename: closingName, width: 750, height: 1000, isCover: false });
     job.outputs = outputs; await jobStorage.writeJob(job);
     await update("CREATING_VIDEO", `${settings.videoDurationSeconds} saniyelik ürün videosu hazırlanıyor`, 90);
     const videoName = `${prefix}_video.mp4`;
