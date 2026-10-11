@@ -32,7 +32,8 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 OUTPUTS_DIR = BASE_DIR / "outputs"
 OZON_TEMPLATE_PATH = TEMPLATES_DIR / "Tüm depolardaki stokları güncelleme şablonu_19.09.2026.xlsx"
-DEPOT_TYPE_PATH = TEMPLATES_DIR / "Depo Tipi.xlsx"
+BUNDLED_DEPOT_TYPE_PATH = TEMPLATES_DIR / "Depo Tipi.xlsx"
+RUNTIME_DEPOT_TYPE_PATH = BASE_DIR / "runtime" / "Depo Tipi.xlsx"
 SETTINGS_PATH = BASE_DIR / "settings.json"
 PRODUCT_CODE_RE = re.compile(r"(?<!\d)(\d{3}\.?\d{3}\.?\d{2})(?!\d)")
 QUANTITY_RE = re.compile(r"(?:\t|\s+)(\d+)\s*$")
@@ -272,7 +273,12 @@ def extract_codes(text):
     return [normalize_code(match) for match in PRODUCT_CODE_RE.findall(str(text or ""))]
 
 
-def validate_depot_type_workbook(path=DEPOT_TYPE_PATH):
+def current_depot_type_path():
+    return RUNTIME_DEPOT_TYPE_PATH if RUNTIME_DEPOT_TYPE_PATH.exists() else BUNDLED_DEPOT_TYPE_PATH
+
+
+def validate_depot_type_workbook(path=None):
+    path = Path(path) if path else current_depot_type_path()
     if not path.exists():
         raise FileNotFoundError(f"{path.name} bulunamadı")
 
@@ -368,7 +374,8 @@ def parse_stock_template_text(text):
     return list(products.values()), skipped_lines
 
 
-def load_depot_products(path=DEPOT_TYPE_PATH):
+def load_depot_products(path=None):
+    path = Path(path) if path else current_depot_type_path()
     if not path.exists():
         raise FileNotFoundError(f"{path.name} bulunamadı")
 
@@ -406,7 +413,8 @@ def load_depot_products(path=DEPOT_TYPE_PATH):
     return list(products.values()), skipped_lines
 
 
-def load_depot_types(path=DEPOT_TYPE_PATH):
+def load_depot_types(path=None):
+    path = Path(path) if path else current_depot_type_path()
     if not path.exists():
         raise FileNotFoundError(f"{path.name} bulunamadı")
 

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { workQueue } from "./workQueue";
+import { syncGoogleDepotSheet } from "@/services/stock/googleDepotSheet";
 
 type StockTemplateState = Record<string, unknown> & {
   id: string;
@@ -31,7 +32,9 @@ export function startQueuedStockTemplate() {
   jobs.set(id, { id, status: "queued", message: "Merkezi kuyrukta bekliyor.", percent: 0, updatedAt: Date.now() });
   void workQueue.enqueue({ id, type: "stock-template", label: "Ozon stok şablonu" }, async () => {
     try {
-      update(id, { status: "running", message: "Stok şablonu başlatılıyor." });
+      update(id, { status: "running", message: "Google Depo Tipi tablosu güncelleniyor.", percent: 1 });
+      const validation = await syncGoogleDepotSheet();
+      update(id, { message: `${validation.row_count || 0} depo tipi satırı doğrulandı. Stok şablonu başlatılıyor.`, percent: 2, depot_validation: validation });
       const started = await backendJson("start-stock-template", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
       const backendId = String(started.id);
       update(id, { ...started, id, backendId });
