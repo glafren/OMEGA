@@ -42,20 +42,23 @@ describe("Ozon kargo kesinti raporu", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
-  it("yüklenen ürün ücretlerini XLSX raporunda kıyaslar", async () => {
+  it("Google tablosundaki ürün ücretlerini XLSX raporunda kıyaslar", async () => {
+    const source = new ExcelJS.Workbook();
+    const sourceSheet = source.addWorksheet("Ücretler");
+    sourceSheet.addRows([["Ürün Kodu", "Kargo Ücreti (USD)"], ["URUN-001", 3.5]]);
+    const sourceBuffer = await source.xlsx.writeBuffer();
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
       const url = String(input);
+      if (url === "https://docs.google.com/spreadsheets/d/1QDoYFvcWtyUJ_PZfqYyu0BSCNAY157pPom5WIvcRJT4/export?format=xlsx") {
+        return new Response(sourceBuffer as BodyInit, { headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" } });
+      }
       if (url.endsWith("/v1/finance/accrual/types")) return Response.json({ accrual_types: [{ id: 91, name: "InternationalDelivery" }] });
       if (url.endsWith("/v3/posting/fbs/get")) return Response.json({ result: { status: "delivered", products: [{ offer_id: "URUN-001", quantity: 3 }] } });
       if (url.endsWith("/v1/finance/accrual/postings")) return Response.json({ posting_accruals: [{ posting_number: "ORDER-1", accruals: [{ type_id: 91, accrued: { amount: "-193", currency: "RUB" } }] }] });
       return new Response(null, { status: 404 });
     });
-    const source = new ExcelJS.Workbook();
-    const sourceSheet = source.addWorksheet("Ücretler");
-    sourceSheet.addRows([["Ürün Kodu", "Kargo Ücreti (USD)"], ["URUN-001", 3.5]]);
     const form = new FormData();
     form.set("store", "omega"); form.set("postingNumbers", "ORDER-1"); form.set("usdRate", "96.5"); form.set("comparisonEnabled", "true");
-    form.set("comparisonFile", new File([await source.xlsx.writeBuffer()], "ucretler.xlsx", { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
     const response = await POST(new Request("http://localhost/api/ozon/shipping-fees", { method: "POST", body: form }));
     expect(response.status).toBe(200);
     const output = new ExcelJS.Workbook();

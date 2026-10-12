@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { AppError, friendlyError } from "@/lib/errors";
-import { parseShippingComparisonWorkbook } from "@/services/ozon/comparisonWorkbook";
+import { fetchShippingComparisonFees } from "@/services/ozon/comparisonWorkbook";
 import { createShippingFeeReport, ozonStoreLabel, parsePostingNumbers } from "@/services/ozon/shippingFees";
 
 export const runtime = "nodejs";
@@ -14,17 +14,15 @@ const requestSchema = z.object({
   usdRate: z.coerce.number().positive().max(10_000),
 });
 
-async function readInput(request: Request) {
+async function readInput(request: Request, signal?: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[5]) {
   const contentType = request.headers.get("content-type") || "";
   if (!contentType.includes("multipart/form-data")) return { input: requestSchema.parse(await request.json()), comparisonFees: undefined };
   const form = await request.formData();
   const input = requestSchema.parse({ store: form.get("store"), postingNumbers: form.get("postingNumbers"), usdRate: form.get("usdRate") });
   const comparisonEnabled = form.get("comparisonEnabled") === "true";
-  const comparisonFile = form.get("comparisonFile");
   if (!comparisonEnabled) return { input, comparisonFees: undefined };
-  if (!(comparisonFile instanceof File) || !comparisonFile.size) throw new AppError("Kargo ücreti kıyaslaması için bir .xlsx dosyası yükleyin.", "COMPARISON_FILE_REQUIRED");
-  if (comparisonFile.size > 10 * 1024 * 1024) throw new AppError("Kıyaslama Excel dosyası en fazla 10 MB olabilir.", "COMPARISON_FILE_TOO_LARGE");
-  return { input, comparisonFees: await parseShippingComparisonWorkbook(await comparisonFile.arrayBuffer()) };
+  onProgress?.({ value: 3, stage: `${ozonStoreLabel(input.store)} kargo ücreti tablosu alınıyor` });
+  return { input, comparisonFees: await fetchShippingComparisonFees(input.store, signal) };
 }
 
 async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFees: ReadonlyMap<string, number> | undefined, rows: Awaited<ReturnType<typeof createShippingFeeReport>>) {
@@ -73,7 +71,7 @@ async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFee
 }
 
 async function generateReport(request: Request, signal: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[5]) {
-  const { input, comparisonFees } = await readInput(request);
+  const { input, comparisonFees } = await readInput(request, signal, onProgress);
   const postingNumbers = parsePostingNumbers(input.postingNumbers);
   if (!postingNumbers.length) throw new AppError("En az bir sipariş numarası girin.", "INVALID_INPUT");
   if (postingNumbers.length > 500) throw new AppError("Tek seferde en fazla 500 sipariş sorgulanabilir.", "TOO_MANY_POSTINGS");
