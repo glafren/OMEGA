@@ -1,6 +1,7 @@
 import { AppError } from "@/lib/errors";
 import { setTimeout as wait } from "node:timers/promises";
 import { normalizeProductCode } from "@/services/ozon/comparisonWorkbook";
+import { fetchUsdRubRates } from "@/services/ozon/exchangeRates";
 
 export type OzonStore = "omega" | "nozzle";
 export type ShippingReportProgress = { value: number; stage: string };
@@ -22,7 +23,7 @@ export type ShippingFeeRow = {
   quantity: number;
   currency: string;
   feeAmount: number | null;
-  usdRate: number;
+  usdRate: number | null;
   feeUsd: number | null;
   comparisonFeeUsd: number | null;
   feeDifferenceUsd: number | null;
@@ -64,6 +65,18 @@ export function translatePostingStatus(status: string) {
 export function formatAccrualDate(value: string) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
   return match ? `${match[3]}.${match[2]}.${match[1]}` : value;
+}
+
+function accrualDateKey(value: string) {
+  return value.match(/^(\d{4}-\d{2}-\d{2})/)?.[1] || "";
+}
+
+function cbrRateDateForAccrual(value: string) {
+  const date = accrualDateKey(value);
+  if (!date) return "";
+  const [year, month, day] = date.split("-").map(Number);
+  const nextDay = new Date(Date.UTC(year, month - 1, day + 1));
+  return nextDay.toISOString().slice(0, 10);
 }
 
 export function findInternationalDeliveryTypes(types: AccrualType[]) {
@@ -159,7 +172,7 @@ async function postingDetails(postingNumber: string, client: OzonClient, signal?
   return { status: result.status || "unknown", products: [...products.values()] };
 }
 
-export async function createShippingFeeReport(store: OzonStore, postingNumbers: string[], usdRate: number, signal?: AbortSignal, comparisonFees?: ReadonlyMap<string, number>, onProgress?: (progress: ShippingReportProgress) => void): Promise<ShippingFeeRow[]> {
+export async function createShippingFeeReport(store: OzonStore, postingNumbers: string[], signal?: AbortSignal, comparisonFees?: ReadonlyMap<string, number>, onProgress?: (progress: ShippingReportProgress) => void): Promise<ShippingFeeRow[]> {
   const credentials = credentialsFor(store);
   const client = new OzonClient(credentials);
   onProgress?.({ value: 5, stage: "Ozon tahakkuk türleri alınıyor" });
@@ -187,10 +200,19 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
     onProgress?.({ value: 60 + Math.round((completedBatch / batchCount) * 25), stage: `Teslimat tahakkukları alınıyor (${completedBatch}/${batchCount})` });
   }
   if (!delivered.length) onProgress?.({ value: 85, stage: "Teslim edilmiş sipariş bulunamadı" });
+  const rateDates = [...accruals.values()]
+    .flat()
+    .filter((item) => typeIds.has(Number(item.type_id)) && (!item.accrued?.currency || item.accrued.currency === "RUB"))
+    .map((item) => cbrRateDateForAccrual(item.accrual_date || ""))
+    .filter(Boolean);
+  onProgress?.({ value: 86, stage: "Tahakkuk günlerinde ilan edilen CBR dolar kurları alınıyor" });
+  const usdRubRates = await fetchUsdRubRates(rateDates, signal);
   onProgress?.({ value: 88, stage: "Rapor verileri hazırlanıyor" });
 
   return statuses.flatMap(({ postingNumber, status, products, error }) => {
-    const isDelivered = status.toLowerCase() === "delivered";
+    const normalizedStatus = status.toLowerCase();
+    const isDelivered = normalizedStatus === "delivered";
+    const isCancelled = normalizedStatus === "canceled" || normalizedStatus === "cancelled";
     const allMatches = (accruals.get(postingNumber) || []).filter((item) => typeIds.has(Number(item.type_id)));
     const productRows = products.length ? products : [{ productCode: "", sku: "", quantity: 1 }];
     return productRows.map((product) => {
@@ -202,18 +224,40 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
       const netAmount = matches.reduce((sum, item) => sum + Number(item.accrued?.amount || 0), 0);
       const feeAmount = matches.length ? Math.max(0, -netAmount) : null;
       const currency = currencies.join(", ") || "RUB";
-      const convertible = feeAmount !== null && currencies.every((value) => !value || value === "RUB");
-      const feeUsd = convertible && feeAmount !== null ? feeAmount / usdRate : null;
+      const rubOnly = matches.length > 0 && currencies.every((value) => !value || value === "RUB");
+      const appliedRates = matches.map((item) => usdRubRates.get(cbrRateDateForAccrual(item.accrual_date || ""))?.rubPerUsd);
+      const convertible = feeAmount !== null && rubOnly && appliedRates.every((rate) => rate !== undefined);
+      const actualFeeUsd = convertible
+        ? Math.max(0, matches.reduce((sum, item, index) => sum - Number(item.accrued?.amount || 0) / (appliedRates[index] as number), 0))
+        : null;
+      const uniqueRates = [...new Set(appliedRates.filter((rate): rate is number => rate !== undefined))];
+      const usdRate = actualFeeUsd !== null
+        ? uniqueRates.length === 1
+          ? uniqueRates[0]
+          : actualFeeUsd > 0 && feeAmount !== null
+            ? feeAmount / actualFeeUsd
+            : null
+        : null;
       const comparisonFee = comparisonFees?.get(normalizeProductCode(product.productCode));
       const comparisonMissing = Boolean(comparisonFees) && comparisonFee === undefined;
+      const useEstimatedFee = actualFeeUsd === null
+        && comparisonFee !== undefined
+        && (isCancelled || productRows.length > 1);
+      const feeUsd = useEstimatedFee ? comparisonFee * product.quantity : actualFeeUsd;
       const baseNote = error || !isDelivered
         ? error || "Sipariş teslim edilmediği için tahakkuk aranmadı."
         : !matches.length
           ? "Bu ürün için uluslararası teslimat hizmeti tahakkuku bulunamadı."
-          : !convertible
+          : !rubOnly
             ? "Tahakkuk RUB olmadığı için dolar dönüşümü yapılmadı."
+            : !convertible
+              ? "Tahakkuk tarihi bulunamadığı için CBR kuru alınamadı."
             : "";
-      const note = [baseNote, comparisonMissing ? "Ürün için kıyaslama kargo ücreti bulunamadı." : ""].filter(Boolean).join(" ");
+      const note = [
+        baseNote,
+        useEstimatedFee ? "Gerçek kesinti bulunamadığı için Google tablosundaki tahmini kargo ücreti kullanıldı." : "",
+        comparisonMissing ? "Ürün için kıyaslama kargo ücreti bulunamadı." : "",
+      ].filter(Boolean).join(" ");
       return {
         store,
         postingNumber,
@@ -227,7 +271,7 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
         usdRate,
         feeUsd,
         comparisonFeeUsd: comparisonFee ?? null,
-        feeDifferenceUsd: comparisonFee !== undefined && feeUsd !== null ? (comparisonFee * product.quantity) - feeUsd : null,
+        feeDifferenceUsd: comparisonFee !== undefined && actualFeeUsd !== null ? (comparisonFee * product.quantity) - actualFeeUsd : null,
         note,
       };
     });

@@ -11,21 +11,20 @@ export const dynamic = "force-dynamic";
 const requestSchema = z.object({
   store: z.enum(["omega", "nozzle"]),
   postingNumbers: z.string().trim().min(1).max(30_000),
-  usdRate: z.coerce.number().positive().max(10_000),
 });
 
-async function readInput(request: Request, signal?: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[5]) {
+async function readInput(request: Request, signal?: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[4]) {
   const contentType = request.headers.get("content-type") || "";
-  if (!contentType.includes("multipart/form-data")) return { input: requestSchema.parse(await request.json()), comparisonFees: undefined };
-  const form = await request.formData();
-  const input = requestSchema.parse({ store: form.get("store"), postingNumbers: form.get("postingNumbers"), usdRate: form.get("usdRate") });
-  const comparisonEnabled = form.get("comparisonEnabled") === "true";
-  if (!comparisonEnabled) return { input, comparisonFees: undefined };
+  const form = contentType.includes("multipart/form-data") ? await request.formData() : undefined;
+  const input = requestSchema.parse(form
+    ? { store: form.get("store"), postingNumbers: form.get("postingNumbers") }
+    : await request.json());
+  const comparisonEnabled = form?.get("comparisonEnabled") === "true";
   onProgress?.({ value: 3, stage: `${ozonStoreLabel(input.store)} kargo ücreti tablosu alınıyor` });
-  return { input, comparisonFees: await fetchShippingComparisonFees(input.store, signal) };
+  return { input, comparisonEnabled, comparisonFees: await fetchShippingComparisonFees(input.store, signal) };
 }
 
-async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFees: ReadonlyMap<string, number> | undefined, rows: Awaited<ReturnType<typeof createShippingFeeReport>>) {
+async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonEnabled: boolean, rows: Awaited<ReturnType<typeof createShippingFeeReport>>) {
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "OMEGA Operasyon Merkezi";
     workbook.created = new Date();
@@ -37,10 +36,10 @@ async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFee
       { header: "Ürün Kodu", key: "productCode", width: 28 },
       { header: "Adet", key: "quantity", width: 10 },
       { header: "Kesinti (RUB)", key: "feeAmount", width: 18 },
-      { header: "USD Kuru (RUB)", key: "usdRate", width: 18 },
+      { header: "CBR USD Kuru (RUB)", key: "usdRate", width: 21 },
       { header: "Kesinti (USD)", key: "feeUsd", width: 18 },
-      ...(comparisonFees ? [{ header: "Kullanıcı Kargo Ücreti (USD/Adet)", key: "comparisonFeeUsd", width: 34 }] : []),
-      ...(comparisonFees ? [{ header: "Fark (Tanımlı Toplam - Kesilen USD)", key: "feeDifferenceUsd", width: 36 }] : []),
+      ...(comparisonEnabled ? [{ header: "Kullanıcı Kargo Ücreti (USD/Adet)", key: "comparisonFeeUsd", width: 34 }] : []),
+      ...(comparisonEnabled ? [{ header: "Fark (Tanımlı Toplam - Kesilen USD)", key: "feeDifferenceUsd", width: 36 }] : []),
       { header: "Açıklama", key: "note", width: 48 },
     ];
     for (const row of rows) sheet.addRow({ ...row, store: ozonStoreLabel(row.store) });
@@ -52,7 +51,7 @@ async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFee
     sheet.getColumn("feeAmount").numFmt = '#,##0.00 "₽"';
     sheet.getColumn("usdRate").numFmt = '#,##0.0000';
     sheet.getColumn("feeUsd").numFmt = '$#,##0.00';
-    if (comparisonFees) {
+    if (comparisonEnabled) {
       sheet.getColumn("comparisonFeeUsd").numFmt = '$#,##0.00';
       const differenceColumn = sheet.getColumn("feeDifferenceUsd");
       differenceColumn.numFmt = '+$#,##0.00;-$#,##0.00;$0.00';
@@ -61,7 +60,7 @@ async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFee
         cell.font = { color: { argb: cell.value >= 0 ? "FF15803D" : "FFDC2626" }, bold: true };
       });
     }
-    sheet.autoFilter = { from: "A1", to: `${comparisonFees ? "K" : "I"}1` };
+    sheet.autoFilter = { from: "A1", to: `${comparisonEnabled ? "K" : "I"}1` };
     sheet.eachRow((row, index) => { row.height = index === 1 ? 24 : 21; });
 
     const output = Buffer.from(await workbook.xlsx.writeBuffer());
@@ -70,20 +69,20 @@ async function buildWorkbook(input: z.infer<typeof requestSchema>, comparisonFee
     return { output, filename };
 }
 
-async function generateReport(request: Request, signal: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[5]) {
-  const { input, comparisonFees } = await readInput(request, signal, onProgress);
+async function generateReport(request: Request, signal: AbortSignal, onProgress?: Parameters<typeof createShippingFeeReport>[4]) {
+  const { input, comparisonEnabled, comparisonFees } = await readInput(request, signal, onProgress);
   const postingNumbers = parsePostingNumbers(input.postingNumbers);
   if (!postingNumbers.length) throw new AppError("En az bir sipariş numarası girin.", "INVALID_INPUT");
   if (postingNumbers.length > 500) throw new AppError("Tek seferde en fazla 500 sipariş sorgulanabilir.", "TOO_MANY_POSTINGS");
-  const rows = await createShippingFeeReport(input.store, postingNumbers, input.usdRate, signal, comparisonFees, onProgress);
+  const rows = await createShippingFeeReport(input.store, postingNumbers, signal, comparisonFees, onProgress);
   onProgress?.({ value: 92, stage: "Excel dosyası oluşturuluyor" });
-  const file = await buildWorkbook(input, comparisonFees, rows);
+  const file = await buildWorkbook(input, comparisonEnabled, rows);
   onProgress?.({ value: 98, stage: "Excel dosyası indirilmeye hazırlanıyor" });
   return { ...file, rowCount: rows.length };
 }
 
 function errorMessage(error: unknown) {
-  return error instanceof z.ZodError ? "Mağaza, sipariş numaraları ve dolar kurunu kontrol edin." : friendlyError(error);
+  return error instanceof z.ZodError ? "Mağaza ve sipariş numaralarını kontrol edin." : friendlyError(error);
 }
 
 function errorStatus(error: unknown) {
