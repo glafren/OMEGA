@@ -215,10 +215,15 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
     const isCancelled = normalizedStatus === "canceled" || normalizedStatus === "cancelled";
     const allMatches = (accruals.get(postingNumber) || []).filter((item) => typeIds.has(Number(item.type_id)));
     const productRows = products.length ? products : [{ productCode: "", sku: "", quantity: 1 }];
+    const sharedMatches = allMatches.filter((item) => !products.some((product) => product.sku && product.sku === String(item.sku || "").trim()));
     return productRows.map((product) => {
+      // Split posting-level fees equally across product rows; keep SKU-specific fees intact.
       const matches = productRows.length === 1
         ? allMatches
-        : allMatches.filter((item) => String(item.sku || "").trim() === product.sku);
+        : [
+          ...allMatches.filter((item) => !sharedMatches.includes(item) && String(item.sku || "").trim() === product.sku),
+          ...sharedMatches.map((item) => ({ ...item, accrued: { ...item.accrued, amount: String(Number(item.accrued?.amount || 0) / productRows.length) } })),
+        ];
       const accrualDates = [...new Set(matches.map((item) => item.accrual_date || "").filter(Boolean))].map(formatAccrualDate).join(", ");
       const currencies = [...new Set(matches.map((item) => item.accrued?.currency || "RUB"))];
       const netAmount = matches.reduce((sum, item) => sum + Number(item.accrued?.amount || 0), 0);
@@ -239,7 +244,8 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
             : null
         : null;
       const comparisonFee = comparisonFees?.get(normalizeProductCode(product.productCode));
-      const comparisonMissing = Boolean(comparisonFees) && comparisonFee === undefined;
+      const comparisonTotal = comparisonFee === undefined ? undefined : comparisonFee * product.quantity;
+      const comparisonMissing = Boolean(comparisonFees) && comparisonTotal === undefined;
       const useEstimatedFee = actualFeeUsd === null
         && comparisonFee !== undefined
         && (isCancelled || productRows.length > 1);
@@ -255,6 +261,7 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
             : "";
       const note = [
         baseNote,
+        productRows.length > 1 && sharedMatches.length ? `Sipariş düzeyindeki kargo tahakkuku ${productRows.length} ürün satırına eşit bölündü.` : "",
         useEstimatedFee ? "Gerçek kesinti bulunamadığı için Google tablosundaki tahmini kargo ücreti kullanıldı." : "",
         comparisonMissing ? "Ürün için kıyaslama kargo ücreti bulunamadı." : "",
       ].filter(Boolean).join(" ");
@@ -271,7 +278,7 @@ export async function createShippingFeeReport(store: OzonStore, postingNumbers: 
         usdRate,
         feeUsd,
         comparisonFeeUsd: comparisonFee ?? null,
-        feeDifferenceUsd: comparisonFee !== undefined && actualFeeUsd !== null ? (comparisonFee * product.quantity) - actualFeeUsd : null,
+        feeDifferenceUsd: comparisonTotal !== undefined && actualFeeUsd !== null ? comparisonTotal - actualFeeUsd : null,
         note,
       };
     });

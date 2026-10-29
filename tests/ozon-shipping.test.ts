@@ -126,7 +126,44 @@ describe("Ozon kargo kesinti raporu", () => {
     expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
-  it("iptal ve tahakkuku ürüne bağlanamayan çok ürünlü siparişlerde Google tahminini kullanır", async () => {
+  it.each([false, true])("SKU'suz kargoyu ürün satırlarına eşit böler ve ürünün kendi ücretiyle kıyaslar (karma SKU: %s)", async (mixedSku) => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url.endsWith("/v1/finance/accrual/types")) return Response.json({ accrual_types: [{ id: 67, name: "RfbsGlobalDelivery", description: "Услуги международной доставки" }] });
+      if (url.endsWith("/v3/posting/fbs/get")) return Response.json({ result: { status: "delivered", products: [
+        { offer_id: "PRODUCT-A", sku: 4842268346, quantity: 1 },
+        { offer_id: "PRODUCT-B", sku: 4842463948, quantity: 2 },
+      ] } });
+      if (url.endsWith("/v1/finance/accrual/postings")) return Response.json({ posting_accruals: [{ posting_number: "16918130-1224-1", accruals: [
+        { type_id: 67, accrued: { amount: "-206.32", currency: "RUB" }, accrual_date: "2026-10-29" },
+        { type_id: 69, sku: 4842268346, accrued: { amount: "-183.45", currency: "RUB" }, accrual_date: "2026-10-29" },
+        ...(mixedSku ? [{ type_id: 67, sku: 4842463948, accrued: { amount: "-96.5", currency: "RUB" }, accrual_date: "2026-10-29" }] : []),
+      ] }] });
+      if (url.includes("date_req=30/10/2026")) return cbrResponse("30.10.2026");
+      return new Response(null, { status: 404 });
+    });
+    const fees = new Map([["PRODUCT-A", 3.5], ["PRODUCT-B", 1]]);
+    const rows = await createShippingFeeReport("omega", ["16918130-1224-1"], undefined, fees);
+    expect(rows).toHaveLength(2);
+    const amount = 206.32 + (mixedSku ? 96.5 : 0);
+    expect(rows[0]).toMatchObject({ productCode: "PRODUCT-A", quantity: 1, accrualDate: "29.10.2026", feeAmount: 103.16, comparisonFeeUsd: 3.5 });
+    expect(rows[1]).toMatchObject({ productCode: "PRODUCT-B", quantity: 2, accrualDate: "29.10.2026", comparisonFeeUsd: 1 });
+    expect(rows[1].feeAmount).toBeCloseTo(103.16 + (mixedSku ? 96.5 : 0));
+    expect(rows[0].feeUsd).toBeCloseTo(103.16 / 96.5);
+    expect(rows[0].feeDifferenceUsd).toBeCloseTo(3.5 - 103.16 / 96.5);
+    expect(rows[1].feeDifferenceUsd).toBeCloseTo(2 - (103.16 + (mixedSku ? 96.5 : 0)) / 96.5);
+    expect(rows.reduce((sum, row) => sum + (row.feeAmount || 0), 0)).toBeCloseTo(amount);
+    expect(rows.reduce((sum, row) => sum + (row.feeUsd || 0), 0)).toBeCloseTo(amount / 96.5);
+    expect(rows[0].note).toContain("2 ürün satırına eşit bölündü");
+    expect(rows[0].note).not.toContain("tahmini");
+    fees.delete("PRODUCT-B");
+    const incomplete = await createShippingFeeReport("omega", ["16918130-1224-1"], undefined, fees);
+    expect(incomplete[0].feeDifferenceUsd).toBeCloseTo(3.5 - 103.16 / 96.5);
+    expect(incomplete[1].feeAmount).toBeCloseTo(103.16 + (mixedSku ? 96.5 : 0));
+    expect(incomplete[1].feeDifferenceUsd).toBeNull();
+  });
+
+  it("iptal ve tahakkuku olmayan çok ürünlü siparişlerde Google tahminini kullanır", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
       const url = String(input);
       const body = JSON.parse(String(init?.body || "{}"));
@@ -137,7 +174,7 @@ describe("Ozon kargo kesinti raporu", () => {
           ? [{ offer_id: "URUN-001", sku: 10, quantity: 2 }]
           : [{ offer_id: "URUN-001", sku: 10, quantity: 2 }, { offer_id: "URUN-ALT", sku: 11, quantity: 3 }],
       } });
-      if (url.endsWith("/v1/finance/accrual/postings")) return Response.json({ posting_accruals: [{ posting_number: "MULTI", accruals: [{ type_id: 91, accrued: { amount: "-965", currency: "RUB" } }] }] });
+      if (url.endsWith("/v1/finance/accrual/postings")) return Response.json({ posting_accruals: [{ posting_number: "MULTI", accruals: [] }] });
       return new Response(null, { status: 404 });
     });
 
